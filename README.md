@@ -1,7 +1,4 @@
-<<<<<<< HEAD
-# py3_docker
-Jupyter lab python 3 FSL/numpy/ANTS environment
-=======
-# Sim_Funcky_Pipeline
-An fMRI preprocessing pipeline that outputs patient Similarity Matrices
->>>>>>> 76974e2f8361df47c8b8ddfbf22cb59b31e79286
+# Sim_Funky_Pipeline
+The following is a repo for a Functional Connectivity pipeline that preprocesses fMRIs and outputs similarity matrices. This repo takes in raw fMRIs and outputs csv files containing the similarity matricies. The outputs can also contain intermediary files outputted during preprocessing. 
+
+This pipeline, as well as this README, is still a work in progress. 
