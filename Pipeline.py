@@ -45,10 +45,10 @@ template_path = '/app/Template/MNI152lin_T1_2mm_brain.nii.gz' #the path where th
 segment_path = '/app/Template/AAL3v1_CombinedThalami_444.nii.gz'#template where thalami regions combined #added by joy
 scheduleTXT = '/app/Template/sched.txt'
 #############TEMPORARY FOR TESTING####################
-# data_dir = '/Volumes/Elements/FunctionalConnectome/preprocessing/data/finalDir/sample_datset'
-# template_path = '/Volumes/Elements/FunctionalConnectome/docker/py3_docker-master/Template/MNI152lin_T1_2mm_brain.nii.gz'
-# segment_path = '/Volumes/Elements/FunctionalConnectome/docker/py3_docker-master/Template/AAL3v1_CombinedThalami_444.nii.gz'
-# scheduleTXT = '/Volumes/Elements/FunctionalConnectome/docker/py3_docker-master/Template/sched.txt'
+data_dir = '/Volumes/Elements/FunctionalConnectome/preprocessing/data/finalDir/sample_datset'
+template_path = '/Volumes/Elements/FunctionalConnectome/docker/py3_docker-master/Template/MNI152lin_T1_2mm_brain.nii.gz'
+segment_path = '/Volumes/Elements/FunctionalConnectome/docker/py3_docker-master/Template/AAL3v1_CombinedThalami_444.nii.gz'
+scheduleTXT = '/Volumes/Elements/FunctionalConnectome/docker/py3_docker-master/Template/sched.txt'
 #############TEMPORARY FOR TESTING####################
 # The pipeline graph and workflow directory will be outputted here
 os.chdir(home_dir) #sets the directory of the workspace to the location of the data
