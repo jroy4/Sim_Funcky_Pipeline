@@ -45,10 +45,10 @@ template_path = '/app/Template/MNI152lin_T1_2mm_brain.nii.gz' #the path where th
 segment_path = '/app/Template/AAL3v1_CombinedThalami_444.nii.gz'#template where thalami regions combined #added by joy
 scheduleTXT = '/app/Template/sched.txt'
 #############TEMPORARY FOR TESTING####################
-data_dir = '/Volumes/Elements/FunctionalConnectome/preprocessing/data/finalDir/sample_datset'
-template_path = '/Volumes/Elements/FunctionalConnectome/docker/py3_docker-master/Template/MNI152lin_T1_2mm_brain.nii.gz'
-segment_path = '/Volumes/Elements/FunctionalConnectome/docker/py3_docker-master/Template/AAL3v1_CombinedThalami_444.nii.gz'
-scheduleTXT = '/Volumes/Elements/FunctionalConnectome/docker/py3_docker-master/Template/sched.txt'
+data_dir = '/Users/joy/Desktop/Research/funconnect2/preprocessing/data'
+template_path = '/Users/joy/Desktop/Research/funconnect2/docker/Template/MNI152lin_T1_2mm_brain.nii.gz'
+segment_path = '/Users/joy/Desktop/Research/funconnect2/docker/Template/AAL3v1_CombinedThalami_444.nii.gz'
+scheduleTXT = '/Users/joy/Desktop/Research/funconnect2/docker/Template/sched.txt'
 #############TEMPORARY FOR TESTING####################
 # The pipeline graph and workflow directory will be outputted here
 os.chdir(home_dir) #sets the directory of the workspace to the location of the data
@@ -119,7 +119,7 @@ def findBestReference(in_file, scheduleTXT, derivatives_dir):
     sys.path.append('/data/')
     import pipeline_functions as pf
 
-
+    entryname = '/'.join(in_file.split('/')[-3:])
     file_name = "best_frames.json"
     # Check if the file exists in the directory
     file_path = os.path.join(derivatives_dir, file_name)
@@ -128,10 +128,11 @@ def findBestReference(in_file, scheduleTXT, derivatives_dir):
         with open(file_path, 'r') as json_file:
             data_dict = json.load(json_file)
 
-        print('Best frame was previously calculated and was loaded from cached file: {}'.format(file_path))
+        print('Best frames were previously calculated and was loaded from cached file: {}'.format(file_path))
 
-        if in_file in data_dict.keys():
-            return data_dict[in_file]
+        if entryname in data_dict.keys():
+            print('The best frame for this file was previously calculated.')
+            return data_dict[entryname]
 
     else:
         print('Best frames cache file does not exist. It will be made now.')
@@ -173,7 +174,7 @@ def findBestReference(in_file, scheduleTXT, derivatives_dir):
     bestVol = np.argmin(column_means).item()
     print('Volume number {} was identified as the best reference for motion correction.'.format(bestVol))
 
-    data_dict[in_file] = bestVol
+    data_dict[entryname] = bestVol
 
     print("This calculation will be saved in cache...")
     with open(file_path, 'w') as json_file:
@@ -639,15 +640,15 @@ preproc.connect(band_pass, 'out_file', smooth, 'in_file')
 dvarsnode = pe.Node(interface=util.Function(input_names=['in_file', 'mask'], output_names=['outfile', 'outmetric', 'outplot_path'], function=MO_DVARS_Subprocess), name='dvars')
 preproc.connect(smooth, 'smoothed_file', dvarsnode, 'in_file')
 preproc.connect(brain_extract, 'mask_file', dvarsnode, 'mask')
-# preproc.connect(dvarsnode, 'outfile', datasink, OUTFOLDERNAME+'.@dvars_out')
-# preproc.connect(dvarsnode, 'outmetric', datasink, OUTFOLDERNAME+'.@dvars_metrics')
-# preproc.connect(dvarsnode, 'outplot_path', datasink, OUTFOLDERNAME+'.@dvars_plot')
+preproc.connect(dvarsnode, 'outfile', datasink, OUTFOLDERNAME+'.@dvars_out')
+preproc.connect(dvarsnode, 'outmetric', datasink, OUTFOLDERNAME+'.@dvars_metrics')
+preproc.connect(dvarsnode, 'outplot_path', datasink, OUTFOLDERNAME+'.@dvars_plot')
 
 # a custom function to plot dvars values against fd values
 plotmotionmetrics_node = pe.Node(interface=util.Function(input_names=['fd_metrics_file', 'dvars_metrics_file'], output_names=['outfile_path'], function=plotMotionMetrics), name='plot_fd_vs_dvars')
 preproc.connect(fdnode, 'outmetric', plotmotionmetrics_node, 'fd_metrics_file')
 preproc.connect(dvarsnode, 'outmetric', plotmotionmetrics_node, 'dvars_metrics_file')
-# preproc.connect(plotmotionmetrics_node, 'outfile_path', datasink, OUTFOLDERNAME+'.@fdvsdvars_plot')
+preproc.connect(plotmotionmetrics_node, 'outfile_path', datasink, OUTFOLDERNAME+'.@fdvsdvars_plot')
 
 
 #the split node splits the 4D BOLD image into its contituents 3D frames to allow certain timeframes to be removed
@@ -702,7 +703,7 @@ rename_node = pe.Node(interface=util.Rename(), name='Rename')
 rename_node.inputs.keep_ext = True
 rename_node.inputs.format_string = 'final_preprocessed_output'
 preproc.connect(merge, 'merged_file',rename_node, 'in_file')
-# preproc.connect(rename_node, 'out_file',datasink, OUTFOLDERNAME+'.@final_out')
+preproc.connect(rename_node, 'out_file',datasink, OUTFOLDERNAME+'.@final_out')
 
 
 
@@ -711,9 +712,9 @@ CalcSimMatrix_node = pe.Node(interface=util.Function(input_names=['bold_path', '
 CalcSimMatrix_node.inputs.maxSegVal = MAX_SEGMENT_VAL
 preproc.connect(merge, 'merged_file', CalcSimMatrix_node, 'bold_path')
 preproc.connect(apply_non, 'out_file', CalcSimMatrix_node, 'template_path')
-# preproc.connect(CalcSimMatrix_node, 'avg_arr_file', datasink, OUTFOLDERNAME+'.@avgBoldSigPerRegion')
-# preproc.connect(CalcSimMatrix_node, 'sim_matrix_file', datasink, OUTFOLDERNAME+'.@similarityMatrix')
-# preproc.connect(CalcSimMatrix_node, 'mapping_dict_file', datasink, OUTFOLDERNAME+'.@MappingDict')
+preproc.connect(CalcSimMatrix_node, 'avg_arr_file', datasink, OUTFOLDERNAME+'.@avgBoldSigPerRegion')
+preproc.connect(CalcSimMatrix_node, 'sim_matrix_file', datasink, OUTFOLDERNAME+'.@similarityMatrix')
+preproc.connect(CalcSimMatrix_node, 'mapping_dict_file', datasink, OUTFOLDERNAME+'.@MappingDict')
 
 
 # # ******************************************************************************
@@ -732,13 +733,13 @@ preproc.connect(apply_non, 'out_file', CalcSimMatrix_node, 'template_path')
 # #     preproc.connect(bias_correct, 'bias_field', datasink, OUTFOLDERNAME+'.@bias')
 # #     preproc.connect(apply_bias, 'out_file', datasink, OUTFOLDERNAME+'.@appbias_out')
 # #     preproc.connect(band_pass, 'out_file', datasink, OUTFOLDERNAME+'.@bandpass_out')
-# preproc.connect(smooth, 'smoothed_file', datasink, OUTFOLDERNAME+'.@smooth_out')
+preproc.connect(smooth, 'smoothed_file', datasink, OUTFOLDERNAME+'.@smooth_out')
 # #     preproc.connect(lin_reg, 'out_file', datasink, OUTFOLDERNAME+'.@lin_out')
 # #     preproc.connect(lin_reg, 'out_matrix_file', datasink, OUTFOLDERNAME+'.@lin_mat')
 # #     preproc.connect(non_reg, 'warped_file', datasink, OUTFOLDERNAME+'.@nlin_out')
 # #     preproc.connect(non_reg, 'field_file', datasink, OUTFOLDERNAME+'.@nlin_mat')
 # #     preproc.connect(apply_lin, 'out_file', datasink, OUTFOLDERNAME+'.@app_lin_out')
-# preproc.connect(apply_non, 'out_file', datasink, OUTFOLDERNAME+'.@app_nlin_out')
+preproc.connect(apply_non, 'out_file', datasink, OUTFOLDERNAME+'.@app_nlin_out')
 # #     preproc.connect(rename_node, 'out_file',datasink, OUTFOLDERNAME+'.@final_out')
 # # ******************************************************************************
 
@@ -749,4 +750,5 @@ preproc.connect(apply_non, 'out_file', CalcSimMatrix_node, 'template_path')
 #creates a workflow diagram (IN THE CURRENT WORKING DIRECTORY)
 preproc.write_graph()
 
-# preproc.run()
+# # preproc.run(plugin='MultiProc', plugin_args={'n_procs': 8, 'memory_gb': 20})
+preproc.run()
