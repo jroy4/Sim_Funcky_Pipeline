@@ -25,12 +25,12 @@ def make_average_arr(bold_path, template_path, maxSegVal):
             matrix = bold_time[template_indices]
             res = np.average(matrix)
             avg_arr[t,s] = res
-    avg_arr = np.nan_to_num(avg_arr) #redundant but do just incase
+    # avg_arr = np.nan_to_num(avg_arr) #redundant but do just incase
     return avg_arr
 
 
 # Note: takes in the average intensity array from the previous function and  
-# calculates the Pearson Correlation Coefficients to find # similarity between
+# calculates the Pearson Correlation Coefficients to find similarity between
 # regions
 def build_sim_arr(avg_arr):
     rows,columns = avg_arr.shape

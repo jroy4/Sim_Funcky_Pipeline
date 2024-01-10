@@ -4,7 +4,7 @@
 #          preprocess BOLD fMRIs and to use those outputs for similarity 
 #          matrix generation.
 #
-# This pipeline is currently being editted to more closely fit Power et al 2014
+# This pipeline is currently being editted to more closely fit Power et al 2012
 #
 # Contact: jor115@pitt.edu
 # Acknowledgments: Ansh Patel from The Hillman Academy contributed to this work.
@@ -28,6 +28,7 @@ import nipy as nipy
 import nipype.algorithms.rapidart as rpd    # rapidart module
 import nipype.interfaces.io as nio          # Data i/o
 import nipype.interfaces.fsl as fsl         # fsl
+import nipype.interfaces.ants as ants       # ANTs
 import nipype.interfaces.utility as util    # utility
 import nipype.pipeline.engine as pe         # pypeline engine
 import numpy as np
@@ -38,6 +39,8 @@ import os, sys
 # ARGUMENTS AND CONFIGURATIONS
 # ******************************************************************************
 
+isTest = True
+
 #sets the directories that will be used in the pipeline 
 home_dir = os.getcwd()
 data_dir = '/data' #the directory where the data is located
@@ -45,10 +48,11 @@ template_path = '/app/Template/MNI152lin_T1_2mm_brain.nii.gz' #the path where th
 segment_path = '/app/Template/AAL3v1_CombinedThalami_444.nii.gz'#template where thalami regions combined #added by joy
 scheduleTXT = '/app/Template/sched.txt'
 #############TEMPORARY FOR TESTING####################
-data_dir = '/Users/joy/Desktop/Research/funconnect2/preprocessing/sample_data'
-template_path = '/Users/joy/Desktop/Research/funconnect2/docker/Template/MNI152lin_T1_2mm_brain.nii.gz'
-segment_path = '/Users/joy/Desktop/Research/funconnect2/docker/Template/AAL3v1_CombinedThalami_444.nii.gz'
-scheduleTXT = '/Users/joy/Desktop/Research/funconnect2/docker/Template/sched.txt'
+if isTest==True:
+    data_dir = '/Users/joy/Desktop/Research/funconnect2/preprocessing/sample_data'
+    template_path = '/Users/joy/Desktop/Research/funconnect2/docker/Template/MNI152lin_T1_4mm_brain.nii.gz'
+    segment_path = '/Users/joy/Desktop/Research/funconnect2/docker/Template/AAL3v1_CombinedThalami_444.nii.gz'
+    scheduleTXT = '/Users/joy/Desktop/Research/funconnect2/docker/Template/sched.txt'
 #############TEMPORARY FOR TESTING####################
 # The pipeline graph and workflow directory will be outputted here
 os.chdir(home_dir) #sets the directory of the workspace to the location of the data
@@ -499,6 +503,45 @@ def plotMotionMetrics(fd_metrics_file, dvars_metrics_file):
     return outfile_path
 
 
+# def AntsNonLinRegistration(moving_image, fixed_image):
+#     import subprocess
+#     import os
+#     from nipype.interfaces.ants import ANTS
+
+
+#     # ANTS REGISTRATION IMPLEMENTATION
+#     non_reg = ANTS()
+#     non_reg.inputs.moving_image = moving_image
+#     non_reg.inputs.fixed_image = fixed_image
+#     non_reg.inputs.dimension=3
+#     non_reg.inputs.metric=['CC',]
+#     non_reg.inputs.metric_weight=[1.0,]
+#     non_reg.inputs.radius=[5,]
+#     non_reg.inputs.output_transform_prefix='ANTS_OUT'
+#     non_reg.inputs.transformation_model='SyN'
+#     non_reg.inputs.gradient_step_length=25
+#     non_reg.inputs.number_of_time_steps=3
+#     non_reg.inputs.delta_time=0.05
+#     non_reg.inputs.regularization='Gauss'
+#     non_reg.inputs.regularization_gradient_field_sigma=0
+#     non_reg.inputs.regularization_deformation_field_sigma=3
+
+#     if isTest:
+#         non_reg.inputs.number_of_iterations=[[2,2,2,1]] #test parameters
+#     else:
+#         non_reg.inputs.number_of_iterations=[[100,100,100,50]]
+
+#     # # non_reg.config = {'execution':{'remove_unnuecessary_outputs' : False}}
+
+#     print("\n\nANTS COMMANDLINE: ")
+#     og_cmdline = non_reg.cmdline
+#     new_cmdline = og_cmdline.replace("SyN[25.,3.0,0.050]", "SyN[25.,3,0.050]")
+#     print(new_cmdline)
+
+#     out_warpedPath = os.path.join(os.getcwd(),'Warp.nii.gz')
+#     return out_warpedPath 
+
+
 
 # ******************************************************************************
 # PIPELINE CREATION
@@ -527,12 +570,16 @@ preproc.connect(GenerateOutDir_node, 'out_dir', datasink, 'base_directory')
 input_node = pe.Node(interface=util.IdentityInterface(fields=['func']),name='input')
 preproc.connect(infosource, 'subject', input_node, 'func')
 
+reorient2std_node = pe.Node(interface=fsl.Reorient2Std(), name='reorient2std')
+preproc.connect(input_node, 'func', reorient2std_node, 'in_file')
+preproc.connect(reorient2std_node, 'out_file', datasink, OUTFOLDERNAME+'.@reorient')
+
 
 #this node accesses the calculate_sigma function to take the input image and output its sigma value
 sigma_value = pe.Node(interface=util.Function(input_names=['image_path', 'hp_frequency', 'lp_frequency'], output_names=['sigma_value_hp', 'sigma_value_lp'], function=calculate_sigma), name='calculate_sigmas')
 sigma_value.inputs.hp_frequency=0.009
 sigma_value.inputs.lp_frequency=0.08
-preproc.connect(input_node, 'func', sigma_value, 'image_path')
+preproc.connect(reorient2std_node, 'out_file', sigma_value, 'image_path')
 
 
 #the template node feeds a standard brain into the linear registration node to be registered into BOLD space
@@ -552,12 +599,12 @@ preproc.connect(input_node, 'func', bestRef_node, 'in_file')
 
 #the MCFLIRT node motion corrects the image
 motion_correct = pe.Node(interface=fsl.MCFLIRT(save_plots = True, save_rms= True), name='McFLIRT')
-preproc.connect(input_node, 'func', motion_correct, 'in_file')
+preproc.connect(reorient2std_node, 'out_file', motion_correct, 'in_file')
 preproc.connect(bestRef_node, 'bestReference', motion_correct, 'ref_vol')
 
 
 #the brain extraction node removes the nonbrain tissue and extracts the brain from the MRI image
-brain_extract = pe.Node(interface=fsl.BET(frac=0.4, mask=True, functional=True), name='bet')
+brain_extract = pe.Node(interface=fsl.BET(frac=0.65, mask=True, functional=True), name='bet')
 preproc.connect(motion_correct, 'out_file', brain_extract, 'in_file')
 
 
@@ -646,35 +693,57 @@ preproc.connect(fdnode, 'outfile', artifact_extract, 'fd_outliers')
 merge = pe.Node(interface=fsl.Merge(dimension = 't'), name = 'merger')
 preproc.connect(artifact_extract, 'extracted_images', merge, 'in_files')
 
+fslroi_node = pe.Node(interface=fsl.ExtractROI(t_size=1), name = 'extractRoi')
+preproc.connect(apply_bet, 'out_file', fslroi_node, 'in_file')
+preproc.connect(bestRef_node, 'bestReference', fslroi_node, 't_min')
+
 
 #the linear registration node registers the standard brain into BOLD space using the BOLD image as reference and only using linear registration
 lin_reg = pe.Node(interface=fsl.FLIRT(), name='linear_reg')
-preproc.connect(merge, 'merged_file', lin_reg, 'reference')
+lin_reg.inputs.searchr_x = [-45,45]
+lin_reg.inputs.searchr_y = [-45,45]
+lin_reg.inputs.searchr_z = [-45,45]
+preproc.connect(fslroi_node, 'roi_file', lin_reg, 'reference')
 preproc.connect(template_feed, 'template', lin_reg, 'in_file')
 
+#the apply_lin node applies the same linear registration as the standard brain to the template segmentation
+apply_lin = pe.Node(interface=fsl.ApplyXFM(interp='nearestneighbour'), name='apply_linear')
+preproc.connect(segment_feed, 'segment', apply_lin, 'in_file')
+preproc.connect(fslroi_node, 'roi_file', apply_lin, 'reference')
+preproc.connect(lin_reg, 'out_matrix_file', apply_lin, 'in_matrix_file')
 
+# FORMER FSL REGISTRATION IMPLEMENTATION
 #the non-linear registration node registers the linear registered brain to match the BOLD image using non-linear registration
 non_reg = pe.Node(interface=fsl.FNIRT(), name='nonlinear_reg')
 non_reg.inputs.in_fwhm            = [8, 4, 2, 2]
 non_reg.inputs.subsampling_scheme = [4, 2, 1, 1]
 non_reg.inputs.warp_resolution    = (6, 6, 6)
-non_reg.inputs.max_nonlin_iter    = [1,1,1,1]
+non_reg.inputs.max_nonlin_iter    = [2, 2, 2, 2]
+# non_reg.inputs.max_nonlin_iter    = [100, 100, 50, 25]
 preproc.connect(lin_reg, 'out_file', non_reg, 'in_file')
-preproc.connect(merge, 'merged_file', non_reg, 'ref_file')
+preproc.connect(fslroi_node, 'roi_file', non_reg, 'ref_file')
 
-
-#the apply_lin node applies the same linear registration as the standard brain to the template segmentation
-apply_lin = pe.Node(interface=fsl.ApplyXFM(interp='nearestneighbour'), name='apply_linear')
-preproc.connect(segment_feed, 'segment', apply_lin, 'in_file')
-preproc.connect(merge, 'merged_file', apply_lin, 'reference')
-preproc.connect(lin_reg, 'out_matrix_file', apply_lin, 'in_matrix_file')
-
-
+# FORMER FSL REGISTRATION IMPLEMENTATION
 #the apply_non node applies the same non-linear registration as the standard brain to the template segmentation
 apply_non = pe.Node(interface=fsl.ApplyWarp(interp='nn'), name='apply_nonlin')
 preproc.connect(apply_lin, 'out_file', apply_non, 'in_file')
-preproc.connect(merge, 'merged_file', apply_non, 'ref_file')
+preproc.connect(fslroi_node, 'roi_file', apply_non, 'ref_file')
 preproc.connect(non_reg, 'field_file', apply_non, 'field_file')
+
+###############################################################################
+# # # # ANTS REGISTRATION IMPLEMENTATION
+# # # non_reg = pe.Node(interface=ants.Registration(), name='ants_Registration')
+# non_reg = pe.Node(interface=util.Function(input_names=['moving_image', 'fixed_image'], output_names=['warped_file'], function=AntsNonLinRegistration), name='antsreg')
+# preproc.connect(lin_reg, 'out_file', non_reg, 'moving_image')
+# preproc.connect(fslroi_node, 'roi_file', non_reg, 'fixed_image')
+
+# # # #the apply_non node applies the same non-linear registration as the standard brain to the template segmentation
+# apply_non = pe.Node(interface=ants.ApplyTransforms(), name='apply_nonlin')
+# apply_non.inputs.interpolation = 'NearestNeighbor'
+# preproc.connect(apply_lin, 'out_file', apply_non, 'input_image')
+# preproc.connect(fslroi_node, 'roi_file', apply_non, 'reference_image')
+# preproc.connect(non_reg, 'warped_file', apply_non, 'transforms')
+###############################################################################
 
 rename_node = pe.Node(interface=util.Rename(), name='Rename')
 rename_node.inputs.keep_ext = True
@@ -687,7 +756,8 @@ preproc.connect(rename_node, 'out_file',datasink, OUTFOLDERNAME+'.@final_out')
 CalcSimMatrix_node = pe.Node(interface=util.Function(input_names=['bold_path', 'template_path', 'maxSegVal'], output_names=['avg_arr_file', 'sim_matrix_file', 'mapping_dict_file'], function=CalcSimMatrix), name='CalcSimMatrix')
 CalcSimMatrix_node.inputs.maxSegVal = MAX_SEGMENT_VAL
 preproc.connect(merge, 'merged_file', CalcSimMatrix_node, 'bold_path')
-preproc.connect(apply_non, 'out_file', CalcSimMatrix_node, 'template_path')
+preproc.connect(apply_non, 'out_file', CalcSimMatrix_node, 'template_path') # FSL Registation implementation
+# preproc.connect(apply_non, 'output_image', CalcSimMatrix_node, 'template_path')  # ANTS registration implementation
 
 
 
@@ -700,7 +770,7 @@ if(SAVE_INTERMEDIATES):
     # preproc.connect(motion_correct, 'par_file', datasink, OUTFOLDERNAME+'.@mcf_par')
     # preproc.connect(motion_correct, 'rms_files', datasink, OUTFOLDERNAME+'.@mcf_rms')
     # preproc.connect(brain_extract, 'out_file', datasink, OUTFOLDERNAME+'.@be_out')
-    # preproc.connect(apply_bet, 'out_file', datasink, OUTFOLDERNAME+'.@applybe_out')
+    preproc.connect(apply_bet, 'out_file', datasink, OUTFOLDERNAME+'.@applybe_out')
     # preproc.connect(normalization_node, 'out_file', datasink, OUTFOLDERNAME+'.@normalization')
     # preproc.connect(artifact, 'outlier_files', datasink, OUTFOLDERNAME+'.@artdet_outs')
     # preproc.connect(calcOutliers, 'out_file', datasink, OUTFOLDERNAME+'.@calcFDOuts_outs')
@@ -711,12 +781,12 @@ if(SAVE_INTERMEDIATES):
     # preproc.connect(apply_bias, 'out_file', datasink, OUTFOLDERNAME+'.@appbias_out')
     # preproc.connect(band_pass, 'out_file', datasink, OUTFOLDERNAME+'.@bandpass_out')
     # preproc.connect(smooth, 'smoothed_file', datasink, OUTFOLDERNAME+'.@smooth_out')
-    # preproc.connect(lin_reg, 'out_file', datasink, OUTFOLDERNAME+'.@lin_out')
-    # preproc.connect(lin_reg, 'out_matrix_file', datasink, OUTFOLDERNAME+'.@lin_mat')
-    # preproc.connect(non_reg, 'warped_file', datasink, OUTFOLDERNAME+'.@nlin_out')
-    # preproc.connect(non_reg, 'field_file', datasink, OUTFOLDERNAME+'.@nlin_mat')
-    # preproc.connect(apply_lin, 'out_file', datasink, OUTFOLDERNAME+'.@app_lin_out')
-    # preproc.connect(apply_non, 'out_file', datasink, OUTFOLDERNAME+'.@app_nlin_out')
+    preproc.connect(lin_reg, 'out_file', datasink, OUTFOLDERNAME+'.@lin_out')
+    preproc.connect(lin_reg, 'out_matrix_file', datasink, OUTFOLDERNAME+'.@lin_mat')
+    preproc.connect(non_reg, 'warped_file', datasink, OUTFOLDERNAME+'.@nlin_out')
+    preproc.connect(non_reg, 'field_file', datasink, OUTFOLDERNAME+'.@nlin_mat')
+    preproc.connect(apply_lin, 'out_file', datasink, OUTFOLDERNAME+'.@app_lin_out')
+    preproc.connect(apply_non, 'out_file', datasink, OUTFOLDERNAME+'.@app_nlin_out')
     # preproc.connect(fdnode, 'outfile', datasink, OUTFOLDERNAME+'.@fd_out')
     # preproc.connect(fdnode, 'outmetric', datasink, OUTFOLDERNAME+'.@fd_metrics')
     # preproc.connect(dvarsnode, 'outfile', datasink, OUTFOLDERNAME+'.@dvars_out')
