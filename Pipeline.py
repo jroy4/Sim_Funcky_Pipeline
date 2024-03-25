@@ -79,7 +79,7 @@ MAX_SEGMENT_VAL = 170
 subject_list_abs = []
 for dirpath, dirnames, filenames in os.walk(data_dir):
     for filename in [f for f in filenames if '.nii' in f]:
-        if derivatives_dir in dirpath:
+        if (derivatives_dir in dirpath) or ('derivatives' in dirpath):
             continue
         else:
             filepath = os.path.join(dirpath, filename)
@@ -602,10 +602,14 @@ motion_correct = pe.Node(interface=fsl.MCFLIRT(save_plots = True, save_rms= True
 preproc.connect(reorient2std_node, 'out_file', motion_correct, 'in_file')
 preproc.connect(bestRef_node, 'bestReference', motion_correct, 'ref_vol')
 
+fslroi_node_2 = pe.Node(interface=fsl.ExtractROI(t_size=1), name = 'extractRoi_2')
+preproc.connect(motion_correct, 'out_file', fslroi_node_2, 'in_file')
+preproc.connect(bestRef_node, 'bestReference', fslroi_node_2, 't_min')
 
 #the brain extraction node removes the nonbrain tissue and extracts the brain from the MRI image
-brain_extract = pe.Node(interface=fsl.BET(frac=0.65, mask=True, functional=True), name='bet')
-preproc.connect(motion_correct, 'out_file', brain_extract, 'in_file')
+brain_extract = pe.Node(interface=fsl.BET(frac=0.45, mask=True, robust=True), name='bet')
+# functional=True,
+preproc.connect(fslroi_node_2, 'roi_file', brain_extract, 'in_file')
 
 
 #the apply bet node multiplies the brain mask to the entire BOLD image to apply the brain extraction
@@ -719,6 +723,7 @@ non_reg.inputs.in_fwhm            = [8, 4, 2, 2]
 non_reg.inputs.subsampling_scheme = [4, 2, 1, 1]
 non_reg.inputs.warp_resolution    = (6, 6, 6)
 non_reg.inputs.max_nonlin_iter    = [2, 2, 2, 2]
+# non_reg.inputs.max_nonlin_iter    = [20, 20, 10, 10]
 # non_reg.inputs.max_nonlin_iter    = [100, 100, 50, 25]
 preproc.connect(lin_reg, 'out_file', non_reg, 'in_file')
 preproc.connect(fslroi_node, 'roi_file', non_reg, 'ref_file')
