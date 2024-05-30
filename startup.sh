@@ -1,30 +1,23 @@
- #!/bin/bash
-## Set up FSL environment 
+#!/bin/bash
 
-FSLDIR=/usr/share/fsl/5.0
-. ${FSLDIR}/etc/fslconf/fsl.sh
+# Set FSL environment variables
+FSLDIR=/usr/local/fsl
 PATH=${FSLDIR}/bin:${PATH}
-export FSLDIR PATH 
+FSLOUTPUTTYPE=NIFTI_GZ
 
-case "$1" in
-  workflow)
-  eval python3 /app/Pipeline.py
-  ;; 
-  debug) 
-    bash
-  ;; 
-      *)
-      echo "
-        Starting Jupyter Lab 
+# Source the FSL configuration script
+source ${FSLDIR}/etc/fslconf/fsl.sh
 
-        Exit with CTRL+D
-        "
+case "$1" in 
+    terminal)
+        bash  
+    ;;
     
-    #exec jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root
-    exec jupyter lab --ip=0.0.0.0
-  ;;
+    *)
+        eval python3 /app/Pipeline.py "$@"
+        cmd_exit="$?"
+        if [ "$cmd_exit" -ne 0 ]; then
+            exit "$cmd_exit"
+        fi
+    ;;
 esac
-
-
-
-
