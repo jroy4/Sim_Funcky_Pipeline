@@ -571,45 +571,6 @@ def plotMotionMetrics(fd_metrics_file, dvars_metrics_file):
     return outfile_path
 
 
-# def AntsNonLinRegistration(moving_image, fixed_image):
-#     import subprocess
-#     import os
-#     from nipype.interfaces.ants import ANTS
-
-
-#     # ANTS REGISTRATION IMPLEMENTATION
-#     non_reg = ANTS()
-#     non_reg.inputs.moving_image = moving_image
-#     non_reg.inputs.fixed_image = fixed_image
-#     non_reg.inputs.dimension=3
-#     non_reg.inputs.metric=['CC',]
-#     non_reg.inputs.metric_weight=[1.0,]
-#     non_reg.inputs.radius=[5,]
-#     non_reg.inputs.output_transform_prefix='ANTS_OUT'
-#     non_reg.inputs.transformation_model='SyN'
-#     non_reg.inputs.gradient_step_length=25
-#     non_reg.inputs.number_of_time_steps=3
-#     non_reg.inputs.delta_time=0.05
-#     non_reg.inputs.regularization='Gauss'
-#     non_reg.inputs.regularization_gradient_field_sigma=0
-#     non_reg.inputs.regularization_deformation_field_sigma=3
-
-#     if TEST_MODE:
-#         non_reg.inputs.number_of_iterations=[[2,2,2,1]] #test parameters
-#     else:
-#         non_reg.inputs.number_of_iterations=[[100,100,100,50]]
-
-#     # # non_reg.config = {'execution':{'remove_unnuecessary_outputs' : False}}
-
-#     print("\n\nANTS COMMANDLINE: ")
-#     og_cmdline = non_reg.cmdline
-#     new_cmdline = og_cmdline.replace("SyN[25.,3.0,0.050]", "SyN[25.,3,0.050]")
-#     print(new_cmdline)
-
-#     out_warpedPath = os.path.join(os.getcwd(),'Warp.nii.gz')
-#     return out_warpedPath 
-
-
 
 # ******************************************************************************
 # PIPELINE CREATION
@@ -617,12 +578,6 @@ def plotMotionMetrics(fd_metrics_file, dvars_metrics_file):
 
 #creates a pipeline
 preproc = pe.Workflow(name='preproc')
-
-
-# #infosource iterates through the list and sends subject data into the pipeline one at a time
-# infosource = pe.Node(interface=util.IdentityInterface(fields=['subject']), name='infosource')
-# infosource.iterables = [('subject', subject_list_abs)]
-
 
 #the input node, which takes the input image from infosource and feeds it into the rest of the pipeline
 input_node = pe.Node(interface=util.IdentityInterface(fields=['func']),name='input')
@@ -694,27 +649,11 @@ preproc.connect(apply_bet, 'out_file', normalization_node, 'in_file')
 preproc.connect(brain_extract, 'mask_file', normalization_node, 'mask_file')
 
 
-
 # calculate the framewise displacement between successive frames to remove jerks
 fdnode = pe.Node(interface=util.Function(input_names=['in_file', 'mask'], output_names=['outfile', 'outmetric'], function=MO_FD_Subprocess), name='fd')
 preproc.connect(apply_bet, 'out_file', fdnode, 'in_file')
 preproc.connect(brain_extract, 'mask_file', fdnode, 'mask')
 
-
-
-### CURRENTLY NOT USED ###
-# #the average node takes the mean of the BOLD image over time to perform bias correction
-# average = pe.Node(interface=fsl.MeanImage(), name='mean_image')
-# preproc.connect(merge, 'merged_file', average, 'in_file')
-
-# #the bias correct node takes the average frame of the BOLD and outputs a bias field that can be used for all other frames
-# bias_correct = pe.Node(interface=fsl.FAST(bias_iters=2, output_biascorrected=True, output_biasfield=True), name='bias_correction')
-# preproc.connect(average, 'out_file', bias_correct, 'in_files')
-
-# #the apply bias node subtracts the bias field from the entire BOLD image to apply the bias correction
-# apply_bias = pe.Node(interface=fsl.BinaryMaths(operation = 'sub'), name = 'bias_apply')
-# preproc.connect(bias_correct, 'bias_field', apply_bias, 'operand_file')
-# preproc.connect(merge, 'merged_file', apply_bias, 'in_file')
 
 # expand 6 motion parameters to 24
 expandParNode = pe.Node(interface=util.Function(input_names=['par_file'], output_names=['out_file'], function=expandMotionParameters), name='ExpandMotionParameters')
@@ -803,21 +742,6 @@ apply_non = pe.Node(interface=fsl.ApplyWarp(interp='nn'), name='apply_nonlin')
 preproc.connect(apply_lin, 'out_file', apply_non, 'in_file')
 preproc.connect(fslroi_node, 'roi_file', apply_non, 'ref_file')
 preproc.connect(non_reg, 'field_file', apply_non, 'field_file')
-
-###############################################################################
-# # # # ANTS REGISTRATION IMPLEMENTATION
-# # # non_reg = pe.Node(interface=ants.Registration(), name='ants_Registration')
-# non_reg = pe.Node(interface=util.Function(input_names=['moving_image', 'fixed_image'], output_names=['warped_file'], function=AntsNonLinRegistration), name='antsreg')
-# preproc.connect(lin_reg, 'out_file', non_reg, 'moving_image')
-# preproc.connect(fslroi_node, 'roi_file', non_reg, 'fixed_image')
-
-# # # #the apply_non node applies the same non-linear registration as the standard brain to the template segmentation
-# apply_non = pe.Node(interface=ants.ApplyTransforms(), name='apply_nonlin')
-# apply_non.inputs.interpolation = 'NearestNeighbor'
-# preproc.connect(apply_lin, 'out_file', apply_non, 'input_image')
-# preproc.connect(fslroi_node, 'roi_file', apply_non, 'reference_image')
-# preproc.connect(non_reg, 'warped_file', apply_non, 'transforms')
-###############################################################################
 
 rename_node = pe.Node(interface=util.Rename(), name='Rename')
 rename_node.inputs.keep_ext = True
