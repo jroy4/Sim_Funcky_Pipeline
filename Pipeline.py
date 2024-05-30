@@ -49,13 +49,14 @@ segment_path = '/app/Template/AAL3v1_CombinedThalami_444.nii.gz'#template where 
 scheduleTXT = '/app/Template/sched.txt'
 #############TEMPORARY FOR TESTING####################
 if isTest==True:
-    data_dir = '/Users/joy/Desktop/Research/funconnect2/preprocessing/sample_data'
-    template_path = '/Users/joy/Desktop/Research/funconnect2/docker/Template/MNI152lin_T1_4mm_brain.nii.gz'
-    segment_path = '/Users/joy/Desktop/Research/funconnect2/docker/Template/AAL3v1_CombinedThalami_444.nii.gz'
-    scheduleTXT = '/Users/joy/Desktop/Research/funconnect2/docker/Template/sched.txt'
+    home_dir = os.getcwd()
+    data_dir = '/data' #the directory where the data is located
+    template_path = '/app/Template/MNI152lin_T1_2mm_brain.nii.gz' #the path where the template is located
+    segment_path = '/app/Template/AAL3v1_CombinedThalami_444.nii.gz'#template where thalami regions combined #added by joy
+    scheduleTXT = '/app/Template/sched.txt'
 #############TEMPORARY FOR TESTING####################
 # The pipeline graph and workflow directory will be outputted here
-os.chdir(home_dir) #sets the directory of the workspace to the location of the data
+os.chdir(data_dir) #sets the directory of the workspace to the location of the data
 # Sets default output to a compressed NIFTI
 fsl.FSLCommand.set_default_output_type('NIFTI_GZ') #sets the default output type to .nii.gz
 # NOTE: These lines control where the output is sorted.
@@ -809,7 +810,7 @@ if(SAVE_INTERMEDIATES):
 # # ******************************************************************************
 
 #creates a workflow diagram (IN THE CURRENT WORKING DIRECTORY)
-preproc.write_graph()
+# preproc.write_graph()
 
 # # preproc.run(plugin='MultiProc', plugin_args={'n_procs': 8, 'memory_gb': 20})
 preproc.run()
