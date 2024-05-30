@@ -85,7 +85,7 @@ args   = parser.parse_args()
 data_dir      = args.parentDir[0]
 scheduleTXT   = '/app/Template/sched.txt'
 outDir        = ''
-outDirName    = 'RadT1cal_Features'
+outDirName    = 'Sim_Funky_Pipeline'
 session       = vetArgNone(args.session_id, None)
 template_path = vetArgNone(args.template, '/app/Template/MNI152lin_T1_2mm_brain.nii.gz') #path in docker container
 segment_path  = vetArgNone(args.segment, '/app/Template/AAL3v1_CombinedThalami.nii.gz') #path in docker container
@@ -141,18 +141,6 @@ SAVE_INTERMEDIATES = True
 # NOTE: This is necessary to keep track of the original template range
 MAX_SEGMENT_VAL = int(nib.load(segment_path).get_fdata().max())
 MAX_SEGMENT_VAL = 170
-# NOTE: The following looks for Niftis in the data dir 
-# This does not include any niftis in the output directory
-subject_list_abs = []
-for dirpath, dirnames, filenames in os.walk(data_dir):
-    for filename in [f for f in filenames if '.nii' in f]:
-        if (derivatives_dir in dirpath) or ('derivatives' in dirpath):
-            continue
-        else:
-            filepath = os.path.join(dirpath, filename)
-            subject_list_abs.append(filepath)
-subject_list_abs = sorted(subject_list_abs)
-# print(subject_list_abs)
 
 # ******************************************************************************
 # HELPER FUNCTIONS
@@ -584,19 +572,14 @@ input_node = pe.Node(interface=util.IdentityInterface(fields=['func']),name='inp
 input_node.inputs.func = patient_func_dir
 
 
-#returns the directory of all input files to store outputs in
-GenerateOutDir_node = pe.Node(interface=util.Function(input_names=['base_outputdir', 'image_path'], output_names=['out_dir'], function=GenerateOutDir), name='GenerateOutDir')
-GenerateOutDir_node.inputs.base_outputdir = derivatives_dir
-preproc.connect(input_node, 'func', GenerateOutDir_node, 'image_path')
-
 #the datasink node stores the outputs of all operations
 datasink = pe.Node(nio.DataSink(parameterization=False), name='sinker')
-preproc.connect(GenerateOutDir_node, 'out_dir', datasink, 'base_directory')
+datasink.inputs.base_directory = outDir
 
 
 reorient2std_node = pe.Node(interface=fsl.Reorient2Std(), name='reorient2std')
 preproc.connect(input_node, 'func', reorient2std_node, 'in_file')
-preproc.connect(reorient2std_node, 'out_file', datasink, OUTFOLDERNAME+'.@reorient')
+preproc.connect(reorient2std_node, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@reorient')
 
 
 #this node accesses the calculate_sigma function to take the input image and output its sigma value
@@ -639,7 +622,7 @@ preproc.connect(fslroi_node_2, 'roi_file', brain_extract, 'in_file')
 #the apply bet node multiplies the brain mask to the entire BOLD image to apply the brain extraction
 apply_bet = pe.Node(interface=fsl.BinaryMaths(operation = 'mul'), name = 'bet_apply')
 preproc.connect(brain_extract, 'mask_file', apply_bet, 'operand_file')
-# preproc.connect(brain_extract, 'mask_file', datasink, OUTFOLDERNAME+'.@mask')
+# preproc.connect(brain_extract, 'mask_file', datasink, DATATYPE_SUBJECT_DIR+'.@mask')
 preproc.connect(motion_correct, 'out_file', apply_bet, 'in_file')
 
 
@@ -747,7 +730,7 @@ rename_node = pe.Node(interface=util.Rename(), name='Rename')
 rename_node.inputs.keep_ext = True
 rename_node.inputs.format_string = 'final_preprocessed_output'
 preproc.connect(merge, 'merged_file',rename_node, 'in_file')
-preproc.connect(rename_node, 'out_file',datasink, OUTFOLDERNAME+'.@final_out')
+preproc.connect(rename_node, 'out_file',datasink, DATATYPE_SUBJECT_DIR+'.@final_out')
 
 
 #the data extraction node takes in the BOLD and template images and extracts the necessary data (average voxel intensity per region, a similarity matrix, and a mapping dictionary)
@@ -763,37 +746,37 @@ preproc.connect(apply_non, 'out_file', CalcSimMatrix_node, 'template_path') # FS
 # # IF MEMORY IS PLENTIFUL, THEN SAVE EVERYTHING
 SAVE_INTERMEDIATES = True
 if(SAVE_INTERMEDIATES):
-    # preproc.connect(segment_feed, 'segment', datasink, OUTFOLDERNAME+'.@OGSeg')
-    # preproc.connect(motion_correct, 'out_file', datasink, OUTFOLDERNAME+'.@mcf_out')
-    # preproc.connect(motion_correct, 'par_file', datasink, OUTFOLDERNAME+'.@mcf_par')
-    # preproc.connect(motion_correct, 'rms_files', datasink, OUTFOLDERNAME+'.@mcf_rms')
-    # preproc.connect(brain_extract, 'out_file', datasink, OUTFOLDERNAME+'.@be_out')
-    preproc.connect(apply_bet, 'out_file', datasink, OUTFOLDERNAME+'.@applybe_out')
-    # preproc.connect(normalization_node, 'out_file', datasink, OUTFOLDERNAME+'.@normalization')
-    # preproc.connect(artifact, 'outlier_files', datasink, OUTFOLDERNAME+'.@artdet_outs')
-    # preproc.connect(calcOutliers, 'out_file', datasink, OUTFOLDERNAME+'.@calcFDOuts_outs')
-    # preproc.connect(artifact_extract, 'rejectionsFile', datasink, OUTFOLDERNAME+'.@rejects_summ')
-    # preproc.connect(merge, 'merged_file', datasink, OUTFOLDERNAME+'.@merge_out')
-    # preproc.connect(bias_correct, 'bias_field', datasink, OUTFOLDERNAME+'.@bias')
-    # preproc.connect(regressNode, 'out_file', datasink, OUTFOLDERNAME+'.@residual_out')
-    # preproc.connect(apply_bias, 'out_file', datasink, OUTFOLDERNAME+'.@appbias_out')
-    # preproc.connect(band_pass, 'out_file', datasink, OUTFOLDERNAME+'.@bandpass_out')
-    # preproc.connect(smooth, 'smoothed_file', datasink, OUTFOLDERNAME+'.@smooth_out')
-    preproc.connect(lin_reg, 'out_file', datasink, OUTFOLDERNAME+'.@lin_out')
-    preproc.connect(lin_reg, 'out_matrix_file', datasink, OUTFOLDERNAME+'.@lin_mat')
-    preproc.connect(non_reg, 'warped_file', datasink, OUTFOLDERNAME+'.@nlin_out')
-    preproc.connect(non_reg, 'field_file', datasink, OUTFOLDERNAME+'.@nlin_mat')
-    preproc.connect(apply_lin, 'out_file', datasink, OUTFOLDERNAME+'.@app_lin_out')
-    preproc.connect(apply_non, 'out_file', datasink, OUTFOLDERNAME+'.@app_nlin_out')
-    # preproc.connect(fdnode, 'outfile', datasink, OUTFOLDERNAME+'.@fd_out')
-    # preproc.connect(fdnode, 'outmetric', datasink, OUTFOLDERNAME+'.@fd_metrics')
-    # preproc.connect(dvarsnode, 'outfile', datasink, OUTFOLDERNAME+'.@dvars_out')
-    # preproc.connect(dvarsnode, 'outmetric', datasink, OUTFOLDERNAME+'.@dvars_metrics')
-    # preproc.connect(dvarsnode, 'outplot_path', datasink, OUTFOLDERNAME+'.@dvars_plot')
-    preproc.connect(plotmotionmetrics_node, 'outfile_path', datasink, OUTFOLDERNAME+'.@fdvsdvars_plot')
-    preproc.connect(CalcSimMatrix_node, 'avg_arr_file', datasink, OUTFOLDERNAME+'.@avgBoldSigPerRegion')
-    preproc.connect(CalcSimMatrix_node, 'sim_matrix_file', datasink, OUTFOLDERNAME+'.@similarityMatrix')
-    preproc.connect(CalcSimMatrix_node, 'mapping_dict_file', datasink, OUTFOLDERNAME+'.@MappingDict')
+    # preproc.connect(segment_feed, 'segment', datasink, DATATYPE_SUBJECT_DIR+'.@OGSeg')
+    # preproc.connect(motion_correct, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_out')
+    # preproc.connect(motion_correct, 'par_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_par')
+    # preproc.connect(motion_correct, 'rms_files', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_rms')
+    # preproc.connect(brain_extract, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@be_out')
+    preproc.connect(apply_bet, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@applybe_out')
+    # preproc.connect(normalization_node, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@normalization')
+    # preproc.connect(artifact, 'outlier_files', datasink, DATATYPE_SUBJECT_DIR+'.@artdet_outs')
+    # preproc.connect(calcOutliers, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@calcFDOuts_outs')
+    # preproc.connect(artifact_extract, 'rejectionsFile', datasink, DATATYPE_SUBJECT_DIR+'.@rejects_summ')
+    # preproc.connect(merge, 'merged_file', datasink, DATATYPE_SUBJECT_DIR+'.@merge_out')
+    # preproc.connect(bias_correct, 'bias_field', datasink, DATATYPE_SUBJECT_DIR+'.@bias')
+    # preproc.connect(regressNode, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@residual_out')
+    # preproc.connect(apply_bias, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@appbias_out')
+    # preproc.connect(band_pass, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@bandpass_out')
+    # preproc.connect(smooth, 'smoothed_file', datasink, DATATYPE_SUBJECT_DIR+'.@smooth_out')
+    preproc.connect(lin_reg, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@lin_out')
+    preproc.connect(lin_reg, 'out_matrix_file', datasink, DATATYPE_SUBJECT_DIR+'.@lin_mat')
+    preproc.connect(non_reg, 'warped_file', datasink, DATATYPE_SUBJECT_DIR+'.@nlin_out')
+    preproc.connect(non_reg, 'field_file', datasink, DATATYPE_SUBJECT_DIR+'.@nlin_mat')
+    preproc.connect(apply_lin, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_lin_out')
+    preproc.connect(apply_non, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_nlin_out')
+    # preproc.connect(fdnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@fd_out')
+    # preproc.connect(fdnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@fd_metrics')
+    # preproc.connect(dvarsnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_out')
+    # preproc.connect(dvarsnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_metrics')
+    # preproc.connect(dvarsnode, 'outplot_path', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_plot')
+    preproc.connect(plotmotionmetrics_node, 'outfile_path', datasink, DATATYPE_SUBJECT_DIR+'.@fdvsdvars_plot')
+    preproc.connect(CalcSimMatrix_node, 'avg_arr_file', datasink, DATATYPE_SUBJECT_DIR+'.@avgBoldSigPerRegion')
+    preproc.connect(CalcSimMatrix_node, 'sim_matrix_file', datasink, DATATYPE_SUBJECT_DIR+'.@similarityMatrix')
+    preproc.connect(CalcSimMatrix_node, 'mapping_dict_file', datasink, DATATYPE_SUBJECT_DIR+'.@MappingDict')
 # # ******************************************************************************
 
 
