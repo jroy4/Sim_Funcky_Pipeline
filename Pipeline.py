@@ -170,7 +170,6 @@ def calculate_sigma(image_path, hp_frequency=0.009, lp_frequency=0.08):
 
 # Note: This function helps to determine the best volume to use as a reference for motion correction.
 def findBestReference(in_file, scheduleTXT, derivatives_dir):
-    return 0
     import nibabel as nib
     import numpy as np
     from tqdm import tqdm
@@ -179,7 +178,7 @@ def findBestReference(in_file, scheduleTXT, derivatives_dir):
     sys.path.append('/data/')
     import pipeline_functions as pf
 
-    entryname = '/'.join(in_file.split('/')[-3:])
+    entryname = os.path.basename(in_file)
     file_name = "best_frames.json"
     # Check if the file exists in the directory
     file_path = os.path.join(derivatives_dir, file_name)
@@ -188,7 +187,7 @@ def findBestReference(in_file, scheduleTXT, derivatives_dir):
         with open(file_path, 'r') as json_file:
             data_dict = json.load(json_file)
 
-        print('A cached file containing the best frames of several scans has already been create. {}'.format(file_path))
+        print('A cached file containing the best frames of several scans already exists: {}'.format(file_path))
 
         if entryname in data_dict.keys():
             print('The best frame for this file was previously calculated and will be used now.')
@@ -196,14 +195,11 @@ def findBestReference(in_file, scheduleTXT, derivatives_dir):
 
     else:
         print('A best frames cache file does not exist. It will be made now.')
-        # Create the file if it doesn't exist
         with open(file_path, 'w') as file:
-            # You can write initial content to the file if needed
             file.write("{}")
         print("File created.")
         data_dict = {}
 
-    
     img = nib.load(in_file)
     numFrames = img.get_fdata().shape[-1]
     matrix = np.zeros((numFrames,numFrames))
@@ -601,7 +597,7 @@ segment_feed.inputs.segment = segment_path
 # # finds the best frame to use as a reference
 bestRef_node = pe.Node(interface=util.Function(input_names=['in_file', 'scheduleTXT', 'derivatives_dir'], output_names=['bestReference'], function=findBestReference), name='findBestReference')
 bestRef_node.inputs.scheduleTXT = scheduleTXT
-bestRef_node.inputs.derivatives_dir = derivatives_dir
+bestRef_node.inputs.derivatives_dir = os.path.join(datasink.inputs.base_directory, DATATYPE_SUBJECT_DIR)
 preproc.connect(input_node, 'func', bestRef_node, 'in_file')
 
 #the MCFLIRT node motion corrects the image
