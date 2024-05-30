@@ -24,6 +24,18 @@ import os, sys
 
 DATATYPE_SUBJECT_DIR = 'func'
 
+# ******************************************************************************
+# ARGUMENTS AND CONFIGURATIONS
+# ******************************************************************************
+# NOTE: THIS ALLOWS FOR ALL INTERMEDIATE OUTPUTS TO BE SAVED
+SAVE_INTERMEDIATES = True
+# NOTE: This is necessary to keep track of the original template range
+# MAX_SEGMENT_VAL = int(nib.load(segment_path).get_fdata().max())
+MAX_SEGMENT_VAL = 170
+scheduleTXT   = '/app/Template/sched.txt'
+
+
+
 def makeParser():
     parser = argparse.ArgumentParser(
                         prog='Sim_Funky_Pipeline', 
@@ -79,68 +91,6 @@ def makeOutDir(outDirName, args, enforceBIDS=True):
     return outDir
 
 
-
-parser = makeParser()
-args   = parser.parse_args()
-data_dir      = args.parentDir[0]
-scheduleTXT   = '/app/Template/sched.txt'
-outDir        = ''
-outDirName    = 'Sim_Funky_Pipeline'
-session       = vetArgNone(args.session_id, None)
-template_path = vetArgNone(args.template, '/app/Template/MNI152lin_T1_2mm_brain.nii.gz') #path in docker container
-segment_path  = vetArgNone(args.segment, '/app/Template/AAL3v1_CombinedThalami.nii.gz') #path in docker container
-enforceBIDS   = True
-outDir        = makeOutDir(outDirName, args, enforceBIDS)
-TEST_MODE     = args.testmode
-
-if TEST_MODE:
-    print("!!YOU ARE USING TEST MODE!!")
-
-for i in os.listdir(args.parentDir[0]):
-    if i[:3] == 'ses':
-        if session == None:
-            raise Exception("Your data is sorted into sessions but you did not indicate a session to process. Please provide the Session.")
-
-if session != None:
-    patient_func_dir = os.path.join(args.parentDir[0], session, args.subject_id[0], DATATYPE_SUBJECT_DIR)
-else:
-    patient_func_dir = os.path.join(args.parentDir[0], args.subject_id[0], DATATYPE_SUBJECT_DIR)
-
-## The following behavior only takes the first T1 seen in the directory. 
-## The code could be expanded to account for multiple runs
-for i in os.listdir(patient_func_dir):
-    if i[-11:] =='func.nii.gz':
-        patient_func_dir = os.path.join(patient_func_dir, i)
-
-
-
-
-
-# ******************************************************************************
-# ARGUMENTS AND CONFIGURATIONS
-# ******************************************************************************
-
-
-#############TEMPORARY FOR TESTING####################
-# The pipeline graph and workflow directory will be outputted here
-# Sets default output to a compressed NIFTI
-fsl.FSLCommand.set_default_output_type('NIFTI_GZ') #sets the default output type to .nii.gz
-# NOTE: These lines control where the output is sorted.
-# The derivatives folder should be a directory outside of the subjects directory
-# This helps allows us to keep inputs and outputs in seperate locations.
-# It is named 'derivatives' in accordance to BIDS (although this pipeline does
-# not assume BIDS input YET)
-derivatives_dir = os.path.join(data_dir, 'derivatives')
-# Leave this blank if you do not want an extra directory of outputs
-# We suggest you keep it incase youre running mulitple pipelines 
-# together on the same input files. This will differentiate pipeline outputs
-# Suggested names: 'FunkyConnect' or 'FunkyBrainSpawn' or 'JoyIsCool'
-OUTFOLDERNAME = 'output'
-# NOTE: THIS ALLOWS FOR ALL INTERMEDIATE OUTPUTS TO BE SAVED
-SAVE_INTERMEDIATES = True
-# NOTE: This is necessary to keep track of the original template range
-MAX_SEGMENT_VAL = int(nib.load(segment_path).get_fdata().max())
-MAX_SEGMENT_VAL = 170
 
 # ******************************************************************************
 # HELPER FUNCTIONS
@@ -560,228 +510,270 @@ def plotMotionMetrics(fd_metrics_file, dvars_metrics_file):
 # PIPELINE CREATION
 # ******************************************************************************
 
-#creates a pipeline
-preproc = pe.Workflow(name='preproc')
+def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjectID, test=False):
+    #creates a pipeline
+    preproc = pe.Workflow(name='preproc')
 
-#the input node, which takes the input image from infosource and feeds it into the rest of the pipeline
-input_node = pe.Node(interface=util.IdentityInterface(fields=['func']),name='input')
-input_node.inputs.func = patient_func_dir
-
-
-#the datasink node stores the outputs of all operations
-datasink = pe.Node(nio.DataSink(parameterization=False), name='sinker')
-datasink.inputs.base_directory = outDir
+    #the input node, which takes the input image from infosource and feeds it into the rest of the pipeline
+    input_node = pe.Node(interface=util.IdentityInterface(fields=['func']),name='input')
+    input_node.inputs.func = patient_func_path
 
 
-reorient2std_node = pe.Node(interface=fsl.Reorient2Std(), name='reorient2std')
-preproc.connect(input_node, 'func', reorient2std_node, 'in_file')
-preproc.connect(reorient2std_node, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@reorient')
+    #the datasink node stores the outputs of all operations
+    datasink = pe.Node(nio.DataSink(parameterization=False), name='sinker')
+    datasink.inputs.base_directory = outDir
 
 
-#this node accesses the calculate_sigma function to take the input image and output its sigma value
-sigma_value = pe.Node(interface=util.Function(input_names=['image_path', 'hp_frequency', 'lp_frequency'], output_names=['sigma_value_hp', 'sigma_value_lp'], function=calculate_sigma), name='calculate_sigmas')
-sigma_value.inputs.hp_frequency=0.009
-sigma_value.inputs.lp_frequency=0.08
-preproc.connect(reorient2std_node, 'out_file', sigma_value, 'image_path')
+    reorient2std_node = pe.Node(interface=fsl.Reorient2Std(), name='reorient2std')
+    preproc.connect(input_node, 'func', reorient2std_node, 'in_file')
+    preproc.connect(reorient2std_node, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@reorient')
 
 
-#the template node feeds a standard brain into the linear registration node to be registered into BOLD space
-template_feed = pe.Node(interface=util.IdentityInterface(fields=['template']), name='template_MNI')
-template_feed.inputs.template = template_path
+    #this node accesses the calculate_sigma function to take the input image and output its sigma value
+    sigma_value = pe.Node(interface=util.Function(input_names=['image_path', 'hp_frequency', 'lp_frequency'], output_names=['sigma_value_hp', 'sigma_value_lp'], function=calculate_sigma), name='calculate_sigmas')
+    sigma_value.inputs.hp_frequency=0.009
+    sigma_value.inputs.lp_frequency=0.08
+    preproc.connect(reorient2std_node, 'out_file', sigma_value, 'image_path')
 
 
-#the segment_feed node feeds a template segmentation into the linear registration node to be registered into BOLD space
-segment_feed = pe.Node(interface=util.IdentityInterface(fields=['segment']), name='segment_AAL')
-segment_feed.inputs.segment = segment_path
-
-# # finds the best frame to use as a reference
-bestRef_node = pe.Node(interface=util.Function(input_names=['in_file', 'scheduleTXT', 'derivatives_dir'], output_names=['bestReference'], function=findBestReference), name='findBestReference')
-bestRef_node.inputs.scheduleTXT = scheduleTXT
-bestRef_node.inputs.derivatives_dir = os.path.join(datasink.inputs.base_directory, DATATYPE_SUBJECT_DIR)
-preproc.connect(input_node, 'func', bestRef_node, 'in_file')
-
-#the MCFLIRT node motion corrects the image
-motion_correct = pe.Node(interface=fsl.MCFLIRT(save_plots = True, save_rms= True), name='McFLIRT')
-preproc.connect(reorient2std_node, 'out_file', motion_correct, 'in_file')
-preproc.connect(bestRef_node, 'bestReference', motion_correct, 'ref_vol')
-
-fslroi_node_2 = pe.Node(interface=fsl.ExtractROI(t_size=1), name = 'extractRoi_2')
-preproc.connect(motion_correct, 'out_file', fslroi_node_2, 'in_file')
-preproc.connect(bestRef_node, 'bestReference', fslroi_node_2, 't_min')
-
-#the brain extraction node removes the nonbrain tissue and extracts the brain from the MRI image
-brain_extract = pe.Node(interface=fsl.BET(frac=0.45, mask=True, robust=True), name='bet')
-# functional=True,
-preproc.connect(fslroi_node_2, 'roi_file', brain_extract, 'in_file')
+    #the template node feeds a standard brain into the linear registration node to be registered into BOLD space
+    template_feed = pe.Node(interface=util.IdentityInterface(fields=['template']), name='template_MNI')
+    template_feed.inputs.template = template_path
 
 
-#the apply bet node multiplies the brain mask to the entire BOLD image to apply the brain extraction
-apply_bet = pe.Node(interface=fsl.BinaryMaths(operation = 'mul'), name = 'bet_apply')
-preproc.connect(brain_extract, 'mask_file', apply_bet, 'operand_file')
-# preproc.connect(brain_extract, 'mask_file', datasink, DATATYPE_SUBJECT_DIR+'.@mask')
-preproc.connect(motion_correct, 'out_file', apply_bet, 'in_file')
+    #the segment_feed node feeds a template segmentation into the linear registration node to be registered into BOLD space
+    segment_feed = pe.Node(interface=util.IdentityInterface(fields=['segment']), name='segment_AAL')
+    segment_feed.inputs.segment = segment_path
+
+    # # finds the best frame to use as a reference
+    bestRef_node = pe.Node(interface=util.Function(input_names=['in_file', 'scheduleTXT', 'derivatives_dir'], output_names=['bestReference'], function=findBestReference), name='findBestReference')
+    bestRef_node.inputs.scheduleTXT = scheduleTXT
+    bestRef_node.inputs.derivatives_dir = os.path.join(datasink.inputs.base_directory, DATATYPE_SUBJECT_DIR)
+    preproc.connect(input_node, 'func', bestRef_node, 'in_file')
+
+    #the MCFLIRT node motion corrects the image
+    motion_correct = pe.Node(interface=fsl.MCFLIRT(save_plots = True, save_rms= True), name='McFLIRT')
+    preproc.connect(reorient2std_node, 'out_file', motion_correct, 'in_file')
+    preproc.connect(bestRef_node, 'bestReference', motion_correct, 'ref_vol')
+
+    fslroi_node_2 = pe.Node(interface=fsl.ExtractROI(t_size=1), name = 'extractRoi_2')
+    preproc.connect(motion_correct, 'out_file', fslroi_node_2, 'in_file')
+    preproc.connect(bestRef_node, 'bestReference', fslroi_node_2, 't_min')
+
+    #the brain extraction node removes the nonbrain tissue and extracts the brain from the MRI image
+    brain_extract = pe.Node(interface=fsl.BET(frac=0.45, mask=True, robust=True), name='bet')
+    # functional=True,
+    preproc.connect(fslroi_node_2, 'roi_file', brain_extract, 'in_file')
 
 
-# we normalize the brain to 1000 as recommended by Power et al, however we normalize to median instead of the mode
-normalization_node = pe.Node(interface=util.Function(input_names=['in_file', 'mask_file'], output_names=['out_file'], function=median_1000_normalization), name='Median1000Normalization')
-preproc.connect(apply_bet, 'out_file', normalization_node, 'in_file')
-preproc.connect(brain_extract, 'mask_file', normalization_node, 'mask_file')
+    #the apply bet node multiplies the brain mask to the entire BOLD image to apply the brain extraction
+    apply_bet = pe.Node(interface=fsl.BinaryMaths(operation = 'mul'), name = 'bet_apply')
+    preproc.connect(brain_extract, 'mask_file', apply_bet, 'operand_file')
+    # preproc.connect(brain_extract, 'mask_file', datasink, DATATYPE_SUBJECT_DIR+'.@mask')
+    preproc.connect(motion_correct, 'out_file', apply_bet, 'in_file')
 
 
-# calculate the framewise displacement between successive frames to remove jerks
-fdnode = pe.Node(interface=util.Function(input_names=['in_file', 'mask'], output_names=['outfile', 'outmetric'], function=MO_FD_Subprocess), name='fd')
-preproc.connect(apply_bet, 'out_file', fdnode, 'in_file')
-preproc.connect(brain_extract, 'mask_file', fdnode, 'mask')
+    # we normalize the brain to 1000 as recommended by Power et al, however we normalize to median instead of the mode
+    normalization_node = pe.Node(interface=util.Function(input_names=['in_file', 'mask_file'], output_names=['out_file'], function=median_1000_normalization), name='Median1000Normalization')
+    preproc.connect(apply_bet, 'out_file', normalization_node, 'in_file')
+    preproc.connect(brain_extract, 'mask_file', normalization_node, 'mask_file')
 
 
-# expand 6 motion parameters to 24
-expandParNode = pe.Node(interface=util.Function(input_names=['par_file'], output_names=['out_file'], function=expandMotionParameters), name='ExpandMotionParameters')
-preproc.connect(motion_correct, 'par_file', expandParNode, 'par_file')
-
-#this node will regress away the headmotion parameters and return the residuals
-regressNode = pe.Node(interface=util.Function(input_names=['in_file', 'par_file'], output_names=['out_file'], function=regressHeadMotion), name='RegressMotionParameters')
-preproc.connect(normalization_node, 'out_file', regressNode, 'in_file')
-preproc.connect(expandParNode, 'out_file', regressNode, 'par_file')
+    # calculate the framewise displacement between successive frames to remove jerks
+    fdnode = pe.Node(interface=util.Function(input_names=['in_file', 'mask'], output_names=['outfile', 'outmetric'], function=MO_FD_Subprocess), name='fd')
+    preproc.connect(apply_bet, 'out_file', fdnode, 'in_file')
+    preproc.connect(brain_extract, 'mask_file', fdnode, 'mask')
 
 
-#the bandpass filtering node filters out extraneous frequencies from the MRI image
-band_pass = pe.Node(interface=fsl.TemporalFilter(), name='bandpass_filtering')
-preproc.connect(sigma_value, 'sigma_value_hp', band_pass, 'highpass_sigma')
-preproc.connect(sigma_value, 'sigma_value_lp', band_pass, 'lowpass_sigma')
-preproc.connect(regressNode, 'out_file', band_pass, 'in_file')
+    # expand 6 motion parameters to 24
+    expandParNode = pe.Node(interface=util.Function(input_names=['par_file'], output_names=['out_file'], function=expandMotionParameters), name='ExpandMotionParameters')
+    preproc.connect(motion_correct, 'par_file', expandParNode, 'par_file')
 
-#the smoothing node smooths the BOLD image. The 6mm fwhm informed by Power et al.
-smooth = pe.Node(interface=fsl.Smooth(), name='smoothing')
-smooth.inputs.fwhm = 6.0
-preproc.connect(band_pass, 'out_file', smooth, 'in_file')
+    #this node will regress away the headmotion parameters and return the residuals
+    regressNode = pe.Node(interface=util.Function(input_names=['in_file', 'par_file'], output_names=['out_file'], function=regressHeadMotion), name='RegressMotionParameters')
+    preproc.connect(normalization_node, 'out_file', regressNode, 'in_file')
+    preproc.connect(expandParNode, 'out_file', regressNode, 'par_file')
 
 
-#a custom function to calculate dvars as indicated by Power et al. We noticed that FSL's motionoutlier renormalized before calculating dvars, which is not desirable here
-dvarsnode = pe.Node(interface=util.Function(input_names=['in_file', 'mask'], output_names=['outfile', 'outmetric', 'outplot_path'], function=MO_DVARS_Subprocess), name='dvars')
-preproc.connect(smooth, 'smoothed_file', dvarsnode, 'in_file')
-preproc.connect(brain_extract, 'mask_file', dvarsnode, 'mask')
+    #the bandpass filtering node filters out extraneous frequencies from the MRI image
+    band_pass = pe.Node(interface=fsl.TemporalFilter(), name='bandpass_filtering')
+    preproc.connect(sigma_value, 'sigma_value_hp', band_pass, 'highpass_sigma')
+    preproc.connect(sigma_value, 'sigma_value_lp', band_pass, 'lowpass_sigma')
+    preproc.connect(regressNode, 'out_file', band_pass, 'in_file')
+
+    #the smoothing node smooths the BOLD image. The 6mm fwhm informed by Power et al.
+    smooth = pe.Node(interface=fsl.Smooth(), name='smoothing')
+    smooth.inputs.fwhm = 6.0
+    preproc.connect(band_pass, 'out_file', smooth, 'in_file')
 
 
-# a custom function to plot dvars values against fd values
-plotmotionmetrics_node = pe.Node(interface=util.Function(input_names=['fd_metrics_file', 'dvars_metrics_file'], output_names=['outfile_path'], function=plotMotionMetrics), name='plot_fd_vs_dvars')
-preproc.connect(fdnode, 'outmetric', plotmotionmetrics_node, 'fd_metrics_file')
-preproc.connect(dvarsnode, 'outmetric', plotmotionmetrics_node, 'dvars_metrics_file')
+    #a custom function to calculate dvars as indicated by Power et al. We noticed that FSL's motionoutlier renormalized before calculating dvars, which is not desirable here
+    dvarsnode = pe.Node(interface=util.Function(input_names=['in_file', 'mask'], output_names=['outfile', 'outmetric', 'outplot_path'], function=MO_DVARS_Subprocess), name='dvars')
+    preproc.connect(smooth, 'smoothed_file', dvarsnode, 'in_file')
+    preproc.connect(brain_extract, 'mask_file', dvarsnode, 'mask')
 
 
-#the split node splits the 4D BOLD image into its contituents 3D frames to allow certain timeframes to be removed
-split = pe.Node(interface=fsl.Split(dimension='t'), name = 'splitter')
-preproc.connect(smooth, 'smoothed_file', split, 'in_file')
+    # a custom function to plot dvars values against fd values
+    plotmotionmetrics_node = pe.Node(interface=util.Function(input_names=['fd_metrics_file', 'dvars_metrics_file'], output_names=['outfile_path'], function=plotMotionMetrics), name='plot_fd_vs_dvars')
+    preproc.connect(fdnode, 'outmetric', plotmotionmetrics_node, 'fd_metrics_file')
+    preproc.connect(dvarsnode, 'outmetric', plotmotionmetrics_node, 'dvars_metrics_file')
 
 
-#the artifact extract node removes the problematic frames as indicated by the artifact detection node
-artifact_extract = pe.Node(interface=util.Function(input_names=['split_images', 'dvars_outliers', 'fd_outliers'], output_names=['extracted_images', 'rejectionsFile'], function=ArtifactExtraction), name='art_extract')
-preproc.connect(split, 'out_files', artifact_extract, 'split_images')
-preproc.connect(dvarsnode, 'outfile', artifact_extract, 'dvars_outliers')
-preproc.connect(fdnode, 'outfile', artifact_extract, 'fd_outliers')
+    #the split node splits the 4D BOLD image into its contituents 3D frames to allow certain timeframes to be removed
+    split = pe.Node(interface=fsl.Split(dimension='t'), name = 'splitter')
+    preproc.connect(smooth, 'smoothed_file', split, 'in_file')
 
 
-#the merge node concatenates the 3D frames of the BOLD into its original 4D state after the removal of troublesome frames
-merge = pe.Node(interface=fsl.Merge(dimension = 't'), name = 'merger')
-preproc.connect(artifact_extract, 'extracted_images', merge, 'in_files')
-
-fslroi_node = pe.Node(interface=fsl.ExtractROI(t_size=1), name = 'extractRoi')
-preproc.connect(apply_bet, 'out_file', fslroi_node, 'in_file')
-preproc.connect(bestRef_node, 'bestReference', fslroi_node, 't_min')
+    #the artifact extract node removes the problematic frames as indicated by the artifact detection node
+    artifact_extract = pe.Node(interface=util.Function(input_names=['split_images', 'dvars_outliers', 'fd_outliers'], output_names=['extracted_images', 'rejectionsFile'], function=ArtifactExtraction), name='art_extract')
+    preproc.connect(split, 'out_files', artifact_extract, 'split_images')
+    preproc.connect(dvarsnode, 'outfile', artifact_extract, 'dvars_outliers')
+    preproc.connect(fdnode, 'outfile', artifact_extract, 'fd_outliers')
 
 
-#the linear registration node registers the standard brain into BOLD space using the BOLD image as reference and only using linear registration
-lin_reg = pe.Node(interface=fsl.FLIRT(), name='linear_reg')
-lin_reg.inputs.searchr_x = [-45,45]
-lin_reg.inputs.searchr_y = [-45,45]
-lin_reg.inputs.searchr_z = [-45,45]
-preproc.connect(fslroi_node, 'roi_file', lin_reg, 'reference')
-preproc.connect(template_feed, 'template', lin_reg, 'in_file')
+    #the merge node concatenates the 3D frames of the BOLD into its original 4D state after the removal of troublesome frames
+    merge = pe.Node(interface=fsl.Merge(dimension = 't'), name = 'merger')
+    preproc.connect(artifact_extract, 'extracted_images', merge, 'in_files')
 
-#the apply_lin node applies the same linear registration as the standard brain to the template segmentation
-apply_lin = pe.Node(interface=fsl.ApplyXFM(interp='nearestneighbour'), name='apply_linear')
-preproc.connect(segment_feed, 'segment', apply_lin, 'in_file')
-preproc.connect(fslroi_node, 'roi_file', apply_lin, 'reference')
-preproc.connect(lin_reg, 'out_matrix_file', apply_lin, 'in_matrix_file')
-
-# FORMER FSL REGISTRATION IMPLEMENTATION
-#the non-linear registration node registers the linear registered brain to match the BOLD image using non-linear registration
-non_reg = pe.Node(interface=fsl.FNIRT(), name='nonlinear_reg')
-non_reg.inputs.in_fwhm            = [8, 4, 2, 2]
-non_reg.inputs.subsampling_scheme = [4, 2, 1, 1]
-non_reg.inputs.warp_resolution    = (6, 6, 6)
-non_reg.inputs.max_nonlin_iter    = [2, 2, 2, 2]
-# non_reg.inputs.max_nonlin_iter    = [20, 20, 10, 10]
-# non_reg.inputs.max_nonlin_iter    = [100, 100, 50, 25]
-preproc.connect(lin_reg, 'out_file', non_reg, 'in_file')
-preproc.connect(fslroi_node, 'roi_file', non_reg, 'ref_file')
-
-# FORMER FSL REGISTRATION IMPLEMENTATION
-#the apply_non node applies the same non-linear registration as the standard brain to the template segmentation
-apply_non = pe.Node(interface=fsl.ApplyWarp(interp='nn'), name='apply_nonlin')
-preproc.connect(apply_lin, 'out_file', apply_non, 'in_file')
-preproc.connect(fslroi_node, 'roi_file', apply_non, 'ref_file')
-preproc.connect(non_reg, 'field_file', apply_non, 'field_file')
-
-rename_node = pe.Node(interface=util.Rename(), name='Rename')
-rename_node.inputs.keep_ext = True
-rename_node.inputs.format_string = 'final_preprocessed_output'
-preproc.connect(merge, 'merged_file',rename_node, 'in_file')
-preproc.connect(rename_node, 'out_file',datasink, DATATYPE_SUBJECT_DIR+'.@final_out')
+    fslroi_node = pe.Node(interface=fsl.ExtractROI(t_size=1), name = 'extractRoi')
+    preproc.connect(apply_bet, 'out_file', fslroi_node, 'in_file')
+    preproc.connect(bestRef_node, 'bestReference', fslroi_node, 't_min')
 
 
-#the data extraction node takes in the BOLD and template images and extracts the necessary data (average voxel intensity per region, a similarity matrix, and a mapping dictionary)
-CalcSimMatrix_node = pe.Node(interface=util.Function(input_names=['bold_path', 'template_path', 'maxSegVal'], output_names=['avg_arr_file', 'sim_matrix_file', 'mapping_dict_file'], function=CalcSimMatrix), name='CalcSimMatrix')
-CalcSimMatrix_node.inputs.maxSegVal = MAX_SEGMENT_VAL
-preproc.connect(merge, 'merged_file', CalcSimMatrix_node, 'bold_path')
-preproc.connect(apply_non, 'out_file', CalcSimMatrix_node, 'template_path') # FSL Registation implementation
-# preproc.connect(apply_non, 'output_image', CalcSimMatrix_node, 'template_path')  # ANTS registration implementation
+    #the linear registration node registers the standard brain into BOLD space using the BOLD image as reference and only using linear registration
+    lin_reg = pe.Node(interface=fsl.FLIRT(), name='linear_reg')
+    lin_reg.inputs.searchr_x = [-45,45]
+    lin_reg.inputs.searchr_y = [-45,45]
+    lin_reg.inputs.searchr_z = [-45,45]
+    preproc.connect(fslroi_node, 'roi_file', lin_reg, 'reference')
+    preproc.connect(template_feed, 'template', lin_reg, 'in_file')
+
+    #the apply_lin node applies the same linear registration as the standard brain to the template segmentation
+    apply_lin = pe.Node(interface=fsl.ApplyXFM(interp='nearestneighbour'), name='apply_linear')
+    preproc.connect(segment_feed, 'segment', apply_lin, 'in_file')
+    preproc.connect(fslroi_node, 'roi_file', apply_lin, 'reference')
+    preproc.connect(lin_reg, 'out_matrix_file', apply_lin, 'in_matrix_file')
+
+    # FORMER FSL REGISTRATION IMPLEMENTATION
+    #the non-linear registration node registers the linear registered brain to match the BOLD image using non-linear registration
+    non_reg = pe.Node(interface=fsl.FNIRT(), name='nonlinear_reg')
+    non_reg.inputs.in_fwhm            = [8, 4, 2, 2]
+    non_reg.inputs.subsampling_scheme = [4, 2, 1, 1]
+    non_reg.inputs.warp_resolution    = (6, 6, 6)
+    non_reg.inputs.max_nonlin_iter    = [2, 2, 2, 2]
+    # non_reg.inputs.max_nonlin_iter    = [20, 20, 10, 10]
+    # non_reg.inputs.max_nonlin_iter    = [100, 100, 50, 25]
+    preproc.connect(lin_reg, 'out_file', non_reg, 'in_file')
+    preproc.connect(fslroi_node, 'roi_file', non_reg, 'ref_file')
+
+    # FORMER FSL REGISTRATION IMPLEMENTATION
+    #the apply_non node applies the same non-linear registration as the standard brain to the template segmentation
+    apply_non = pe.Node(interface=fsl.ApplyWarp(interp='nn'), name='apply_nonlin')
+    preproc.connect(apply_lin, 'out_file', apply_non, 'in_file')
+    preproc.connect(fslroi_node, 'roi_file', apply_non, 'ref_file')
+    preproc.connect(non_reg, 'field_file', apply_non, 'field_file')
+
+    rename_node = pe.Node(interface=util.Rename(), name='Rename')
+    rename_node.inputs.keep_ext = True
+    rename_node.inputs.format_string = 'final_preprocessed_output'
+    preproc.connect(merge, 'merged_file',rename_node, 'in_file')
+    preproc.connect(rename_node, 'out_file',datasink, DATATYPE_SUBJECT_DIR+'.@final_out')
+
+
+    #the data extraction node takes in the BOLD and template images and extracts the necessary data (average voxel intensity per region, a similarity matrix, and a mapping dictionary)
+    CalcSimMatrix_node = pe.Node(interface=util.Function(input_names=['bold_path', 'template_path', 'maxSegVal'], output_names=['avg_arr_file', 'sim_matrix_file', 'mapping_dict_file'], function=CalcSimMatrix), name='CalcSimMatrix')
+    CalcSimMatrix_node.inputs.maxSegVal = MAX_SEGMENT_VAL
+    preproc.connect(merge, 'merged_file', CalcSimMatrix_node, 'bold_path')
+    preproc.connect(apply_non, 'out_file', CalcSimMatrix_node, 'template_path') # FSL Registation implementation
+    # preproc.connect(apply_non, 'output_image', CalcSimMatrix_node, 'template_path')  # ANTS registration implementation
 
 
 
-# # ******************************************************************************
-# # IF MEMORY IS PLENTIFUL, THEN SAVE EVERYTHING
-SAVE_INTERMEDIATES = True
-if(SAVE_INTERMEDIATES):
-    # preproc.connect(segment_feed, 'segment', datasink, DATATYPE_SUBJECT_DIR+'.@OGSeg')
-    # preproc.connect(motion_correct, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_out')
-    # preproc.connect(motion_correct, 'par_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_par')
-    # preproc.connect(motion_correct, 'rms_files', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_rms')
-    # preproc.connect(brain_extract, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@be_out')
-    preproc.connect(apply_bet, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@applybe_out')
-    # preproc.connect(normalization_node, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@normalization')
-    # preproc.connect(artifact, 'outlier_files', datasink, DATATYPE_SUBJECT_DIR+'.@artdet_outs')
-    # preproc.connect(calcOutliers, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@calcFDOuts_outs')
-    # preproc.connect(artifact_extract, 'rejectionsFile', datasink, DATATYPE_SUBJECT_DIR+'.@rejects_summ')
-    # preproc.connect(merge, 'merged_file', datasink, DATATYPE_SUBJECT_DIR+'.@merge_out')
-    # preproc.connect(bias_correct, 'bias_field', datasink, DATATYPE_SUBJECT_DIR+'.@bias')
-    # preproc.connect(regressNode, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@residual_out')
-    # preproc.connect(apply_bias, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@appbias_out')
-    # preproc.connect(band_pass, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@bandpass_out')
-    # preproc.connect(smooth, 'smoothed_file', datasink, DATATYPE_SUBJECT_DIR+'.@smooth_out')
-    preproc.connect(lin_reg, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@lin_out')
-    preproc.connect(lin_reg, 'out_matrix_file', datasink, DATATYPE_SUBJECT_DIR+'.@lin_mat')
-    preproc.connect(non_reg, 'warped_file', datasink, DATATYPE_SUBJECT_DIR+'.@nlin_out')
-    preproc.connect(non_reg, 'field_file', datasink, DATATYPE_SUBJECT_DIR+'.@nlin_mat')
-    preproc.connect(apply_lin, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_lin_out')
-    preproc.connect(apply_non, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_nlin_out')
-    # preproc.connect(fdnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@fd_out')
-    # preproc.connect(fdnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@fd_metrics')
-    # preproc.connect(dvarsnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_out')
-    # preproc.connect(dvarsnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_metrics')
-    # preproc.connect(dvarsnode, 'outplot_path', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_plot')
-    preproc.connect(plotmotionmetrics_node, 'outfile_path', datasink, DATATYPE_SUBJECT_DIR+'.@fdvsdvars_plot')
-    preproc.connect(CalcSimMatrix_node, 'avg_arr_file', datasink, DATATYPE_SUBJECT_DIR+'.@avgBoldSigPerRegion')
-    preproc.connect(CalcSimMatrix_node, 'sim_matrix_file', datasink, DATATYPE_SUBJECT_DIR+'.@similarityMatrix')
-    preproc.connect(CalcSimMatrix_node, 'mapping_dict_file', datasink, DATATYPE_SUBJECT_DIR+'.@MappingDict')
-# # ******************************************************************************
+    # # ******************************************************************************
+    # # IF MEMORY IS PLENTIFUL, THEN SAVE EVERYTHING
+    SAVE_INTERMEDIATES = True
+    if(SAVE_INTERMEDIATES):
+        # preproc.connect(segment_feed, 'segment', datasink, DATATYPE_SUBJECT_DIR+'.@OGSeg')
+        # preproc.connect(motion_correct, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_out')
+        # preproc.connect(motion_correct, 'par_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_par')
+        # preproc.connect(motion_correct, 'rms_files', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_rms')
+        # preproc.connect(brain_extract, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@be_out')
+        preproc.connect(apply_bet, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@applybe_out')
+        # preproc.connect(normalization_node, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@normalization')
+        # preproc.connect(artifact, 'outlier_files', datasink, DATATYPE_SUBJECT_DIR+'.@artdet_outs')
+        # preproc.connect(calcOutliers, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@calcFDOuts_outs')
+        # preproc.connect(artifact_extract, 'rejectionsFile', datasink, DATATYPE_SUBJECT_DIR+'.@rejects_summ')
+        # preproc.connect(merge, 'merged_file', datasink, DATATYPE_SUBJECT_DIR+'.@merge_out')
+        # preproc.connect(bias_correct, 'bias_field', datasink, DATATYPE_SUBJECT_DIR+'.@bias')
+        # preproc.connect(regressNode, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@residual_out')
+        # preproc.connect(apply_bias, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@appbias_out')
+        # preproc.connect(band_pass, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@bandpass_out')
+        # preproc.connect(smooth, 'smoothed_file', datasink, DATATYPE_SUBJECT_DIR+'.@smooth_out')
+        preproc.connect(lin_reg, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@lin_out')
+        preproc.connect(lin_reg, 'out_matrix_file', datasink, DATATYPE_SUBJECT_DIR+'.@lin_mat')
+        preproc.connect(non_reg, 'warped_file', datasink, DATATYPE_SUBJECT_DIR+'.@nlin_out')
+        preproc.connect(non_reg, 'field_file', datasink, DATATYPE_SUBJECT_DIR+'.@nlin_mat')
+        preproc.connect(apply_lin, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_lin_out')
+        preproc.connect(apply_non, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_nlin_out')
+        # preproc.connect(fdnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@fd_out')
+        # preproc.connect(fdnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@fd_metrics')
+        # preproc.connect(dvarsnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_out')
+        # preproc.connect(dvarsnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_metrics')
+        # preproc.connect(dvarsnode, 'outplot_path', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_plot')
+        preproc.connect(plotmotionmetrics_node, 'outfile_path', datasink, DATATYPE_SUBJECT_DIR+'.@fdvsdvars_plot')
+        preproc.connect(CalcSimMatrix_node, 'avg_arr_file', datasink, DATATYPE_SUBJECT_DIR+'.@avgBoldSigPerRegion')
+        preproc.connect(CalcSimMatrix_node, 'sim_matrix_file', datasink, DATATYPE_SUBJECT_DIR+'.@similarityMatrix')
+        preproc.connect(CalcSimMatrix_node, 'mapping_dict_file', datasink, DATATYPE_SUBJECT_DIR+'.@MappingDict')
+    # # ******************************************************************************
+
+    return preproc
 
 
-# # ******************************************************************************
-# # PIPELINE RUN
-# # ******************************************************************************
 
-#creates a workflow diagram (IN THE CURRENT WORKING DIRECTORY)
-# preproc.write_graph()
 
-# # preproc.run(plugin='MultiProc', plugin_args={'n_procs': 8, 'memory_gb': 20})
-preproc.run()
+
+def main():
+    parser = makeParser()
+    args   = parser.parse_args()
+    data_dir      = args.parentDir[0]
+    outDir        = ''
+    outDirName    = 'Sim_Funky_Pipeline'
+    session       = vetArgNone(args.session_id, None)
+    template_path = vetArgNone(args.template, '/app/Template/MNI152lin_T1_2mm_brain.nii.gz') #path in docker container
+    segment_path  = vetArgNone(args.segment, '/app/Template/AAL3v1_CombinedThalami.nii.gz') #path in docker container
+    enforceBIDS   = True
+    outDir        = makeOutDir(outDirName, args, enforceBIDS)
+    TEST_MODE     = args.testmode
+
+    if TEST_MODE:
+        print("!!YOU ARE USING TEST MODE!!")
+
+    for i in os.listdir(args.parentDir[0]):
+        if i[:3] == 'ses':
+            if session == None:
+                raise Exception("Your data is sorted into sessions but you did not indicate a session to process. Please provide the Session.")
+
+    if session != None:
+        patient_func_dir = os.path.join(args.parentDir[0], session, args.subject_id[0], DATATYPE_SUBJECT_DIR)
+    else:
+        patient_func_dir = os.path.join(args.parentDir[0], args.subject_id[0], DATATYPE_SUBJECT_DIR)
+
+    ## The following behavior only takes the first T1 seen in the directory. 
+    ## The code could be expanded to account for multiple runs
+    for i in os.listdir(patient_func_dir):
+        if i[-11:] =='func.nii.gz':
+            patient_func_path = os.path.join(patient_func_dir, i)
+
+
+    preproc = buildWorkflow(patient_func_path, template_path, segment_path, outDir, args.subject_id[0], TEST_MODE)
+
+    preproc.run()
+
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\tReceived Keyboard Interrupt, ending program.\n")
+        sys.exit(2)
