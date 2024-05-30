@@ -9,20 +9,7 @@
 # Contact: jor115@pitt.edu
 # Acknowledgments: Ansh Patel from The Hillman Academy contributed to this work.
 ################################################################################
-
-################################################################################
-##TO DO: 
-# 1. Allow configuration of data/output/workingdir location
-# 2. Allow configuration of template/segmentation files
-# 3. Allow configuration of verbosity
-# 4. Allow configuration of intermediate product storage
-# 5. Take a config file to change paramters
-# 6. (Optional) Take inline arguments from terminal
-# 7. (Optional) Print blurb at beginning and end of the pipeline things users
-#     should be aware of
-##
-################################################################################
-
+import argparse
 import nibabel as nib
 import nipy as nipy
 import nipype.algorithms.rapidart as rpd    # rapidart module
@@ -35,28 +22,107 @@ import numpy as np
 import os, sys
 
 
+DATATYPE_SUBJECT_DIR = 'func'
+
+def makeParser():
+    parser = argparse.ArgumentParser(
+                        prog='Sim_Funky_Pipeline', 
+                        usage='This program preprocesses fMRIs for later use with connectivity analyses',
+                        epilog='BUG REPORTING: Report bugs to pirc@chp.edu or more directly to Joy Roy at the Childrens Hospital of Pittsburgh.'
+        )
+    parser.add_argument('--version', action='version', version='%(prog)s 0.1')
+    parser.add_argument('-p','--parentDir', nargs=1, required=True,
+                        help='Path to the parent data directory. BIDS compatible datasets are encouraged.')
+    parser.add_argument('-sid','--subject_id', nargs=1, required=True,
+                        help='Subject ID used to indicate which patient to preprocess')
+    parser.add_argument('-spath','--subject_t1_path', nargs=1, required=False,
+                        help='Path to a subjects T1 scan. This is not necessary if subject ID is provided as the T1 will be automatically found using the T1w.nii.gz extension')
+    parser.add_argument('-ses_id','--session_id', nargs=1, required=False,
+                        help='Session ID used to indicate which session to look for the patient to preprocess')
+    parser.add_argument('-tem','--template', nargs=1, required=False,
+                        help='Template to be used to register into patient space. Default is MNI152lin_T1_2mm_brain.nii.gz')
+    parser.add_argument('-seg','--segment', nargs=1, required=False,
+                        help='Atlas to be used to identify brain regions in patient space. This is used in conjunction with the template. Please ensure that the atlas is in the same space as the template. Default is the AALv3 template.')
+    parser.add_argument('-o','--ourDir', nargs=1, required=True,
+                        help='Path to the \'derivatives\' folder or chosen out folder. All results will be submitted to outDir/out/str_preproc/subject_id/...')
+    parser.add_argument('--testmode', required=False, action='store_true',
+                        help='Activates TEST_MODE to make pipeline finish faster for quicker debugging')
+
+    return parser 
+
+# This was developed instead of using the default parameter in the argparser
+# bc argparser only returns a list or None and you can't do None[0]. 
+# Not all variables need a default but need to be inspected whether they are None
+def vetArgNone(variable, default):
+    if variable==None:
+        return default
+    else:
+        return variable[0]
+
+def makeOutDir(outDirName, args, enforceBIDS=True):
+    outDir = ''
+    if os.path.basename(args.ourDir[0]) == 'derivatives':
+        outDir = os.path.join(args.ourDir[0], 'out', outDirName, args.subject_id[0])
+    elif args.ourDir[0] == args.parentDir[0]:
+        print("Your outdir is the same as your parent dir!")
+        print("Making a derivatives folder for you...")
+        outDir = os.path.join(args.ourDir[0], 'derivatives', 'out', outDirName, args.subject_id[0])
+    elif os.path.basename(args.ourDir[0]) == args.subject_id[0]:
+        print('The given out directory seems to be at a patient level rather than parent level')
+        print('It is hard to determine if your out directory is BIDS compliant')
+    elif 'derivatives' in args.ourDir[0]:
+        outDir = os.path.join(args.ourDir[0], outDirName, args.subject_id[0])
+
+    if not os.path.exists(outDir):
+        os.makedirs(outDir, exist_ok=True)
+
+    return outDir
+
+
+
+parser = makeParser()
+args   = parser.parse_args()
+data_dir      = args.parentDir[0]
+scheduleTXT   = '/app/Template/sched.txt'
+outDir        = ''
+outDirName    = 'RadT1cal_Features'
+session       = vetArgNone(args.session_id, None)
+template_path = vetArgNone(args.template, '/app/Template/MNI152lin_T1_2mm_brain.nii.gz') #path in docker container
+segment_path  = vetArgNone(args.segment, '/app/Template/AAL3v1_CombinedThalami.nii.gz') #path in docker container
+enforceBIDS   = True
+outDir        = makeOutDir(outDirName, args, enforceBIDS)
+TEST_MODE     = args.testmode
+
+if TEST_MODE:
+    print("!!YOU ARE USING TEST MODE!!")
+
+for i in os.listdir(args.parentDir[0]):
+    if i[:3] == 'ses':
+        if session == None:
+            raise Exception("Your data is sorted into sessions but you did not indicate a session to process. Please provide the Session.")
+
+if session != None:
+    patient_func_dir = os.path.join(args.parentDir[0], session, args.subject_id[0], DATATYPE_SUBJECT_DIR)
+else:
+    patient_func_dir = os.path.join(args.parentDir[0], args.subject_id[0], DATATYPE_SUBJECT_DIR)
+
+## The following behavior only takes the first T1 seen in the directory. 
+## The code could be expanded to account for multiple runs
+for i in os.listdir(patient_func_dir):
+    if i[-11:] =='func.nii.gz':
+        patient_func_dir = os.path.join(patient_func_dir, i)
+
+
+
+
+
 # ******************************************************************************
 # ARGUMENTS AND CONFIGURATIONS
 # ******************************************************************************
 
-isTest = True
 
-#sets the directories that will be used in the pipeline 
-home_dir = os.getcwd()
-data_dir = '/data' #the directory where the data is located
-template_path = '/app/Template/MNI152lin_T1_2mm_brain.nii.gz' #the path where the template is located
-segment_path = '/app/Template/AAL3v1_CombinedThalami_444.nii.gz'#template where thalami regions combined #added by joy
-scheduleTXT = '/app/Template/sched.txt'
-#############TEMPORARY FOR TESTING####################
-if isTest==True:
-    home_dir = os.getcwd()
-    data_dir = '/data' #the directory where the data is located
-    template_path = '/app/Template/MNI152lin_T1_2mm_brain.nii.gz' #the path where the template is located
-    segment_path = '/app/Template/AAL3v1_CombinedThalami_444.nii.gz'#template where thalami regions combined #added by joy
-    scheduleTXT = '/app/Template/sched.txt'
 #############TEMPORARY FOR TESTING####################
 # The pipeline graph and workflow directory will be outputted here
-os.chdir(data_dir) #sets the directory of the workspace to the location of the data
 # Sets default output to a compressed NIFTI
 fsl.FSLCommand.set_default_output_type('NIFTI_GZ') #sets the default output type to .nii.gz
 # NOTE: These lines control where the output is sorted.
@@ -116,6 +182,7 @@ def calculate_sigma(image_path, hp_frequency=0.009, lp_frequency=0.08):
 
 # Note: This function helps to determine the best volume to use as a reference for motion correction.
 def findBestReference(in_file, scheduleTXT, derivatives_dir):
+    return 0
     import nibabel as nib
     import numpy as np
     from tqdm import tqdm
@@ -527,7 +594,7 @@ def plotMotionMetrics(fd_metrics_file, dvars_metrics_file):
 #     non_reg.inputs.regularization_gradient_field_sigma=0
 #     non_reg.inputs.regularization_deformation_field_sigma=3
 
-#     if isTest:
+#     if TEST_MODE:
 #         non_reg.inputs.number_of_iterations=[[2,2,2,1]] #test parameters
 #     else:
 #         non_reg.inputs.number_of_iterations=[[100,100,100,50]]
@@ -552,24 +619,25 @@ def plotMotionMetrics(fd_metrics_file, dvars_metrics_file):
 preproc = pe.Workflow(name='preproc')
 
 
-#infosource iterates through the list and sends subject data into the pipeline one at a time
-infosource = pe.Node(interface=util.IdentityInterface(fields=['subject']), name='infosource')
-infosource.iterables = [('subject', subject_list_abs)]
+# #infosource iterates through the list and sends subject data into the pipeline one at a time
+# infosource = pe.Node(interface=util.IdentityInterface(fields=['subject']), name='infosource')
+# infosource.iterables = [('subject', subject_list_abs)]
+
+
+#the input node, which takes the input image from infosource and feeds it into the rest of the pipeline
+input_node = pe.Node(interface=util.IdentityInterface(fields=['func']),name='input')
+input_node.inputs.func = patient_func_dir
 
 
 #returns the directory of all input files to store outputs in
 GenerateOutDir_node = pe.Node(interface=util.Function(input_names=['base_outputdir', 'image_path'], output_names=['out_dir'], function=GenerateOutDir), name='GenerateOutDir')
 GenerateOutDir_node.inputs.base_outputdir = derivatives_dir
-preproc.connect(infosource, 'subject', GenerateOutDir_node, 'image_path')
+preproc.connect(input_node, 'func', GenerateOutDir_node, 'image_path')
 
 #the datasink node stores the outputs of all operations
 datasink = pe.Node(nio.DataSink(parameterization=False), name='sinker')
 preproc.connect(GenerateOutDir_node, 'out_dir', datasink, 'base_directory')
 
-
-#the input node, which takes the input image from infosource and feeds it into the rest of the pipeline
-input_node = pe.Node(interface=util.IdentityInterface(fields=['func']),name='input')
-preproc.connect(infosource, 'subject', input_node, 'func')
 
 reorient2std_node = pe.Node(interface=fsl.Reorient2Std(), name='reorient2std')
 preproc.connect(input_node, 'func', reorient2std_node, 'in_file')
