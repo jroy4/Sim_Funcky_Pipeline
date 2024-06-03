@@ -1,4 +1,4 @@
-# RadT1cal_Feats
+# Sim_Funcky_Pipeline
 
 Sim_Funcky_Pipeline is a pipeline designed to preprocess BOLD Functional MRIs for visualization and further analysis. This tool also calculates the average signal intensity per ROI in a given volumetric atlas and returns a pairwise similarity matrix. 
 
