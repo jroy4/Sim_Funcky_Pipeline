@@ -23,15 +23,13 @@ import os, sys
 
 
 DATATYPE_SUBJECT_DIR = 'func'
+DATATYPE_FILE_SUFFIX = 'bold' 
 
 # ******************************************************************************
 # ARGUMENTS AND CONFIGURATIONS
 # ******************************************************************************
 # NOTE: THIS ALLOWS FOR ALL INTERMEDIATE OUTPUTS TO BE SAVED
 SAVE_INTERMEDIATES = True
-# NOTE: This is necessary to keep track of the original template range
-# MAX_SEGMENT_VAL = int(nib.load(segment_path).get_fdata().max())
-MAX_SEGMENT_VAL = 170
 scheduleTXT   = '/app/Template/sched.txt'
 
 
@@ -116,6 +114,16 @@ def calculate_sigma(image_path, hp_frequency=0.009, lp_frequency=0.08):
     sigma_val_hp = 1 / ((test_tuple[-1]) * hp_frequency)
     sigma_val_lp = 1 / ((test_tuple[-1]) * lp_frequency)
     return sigma_val_hp, sigma_val_lp
+
+
+# Nipype nodes built on python-functions need to reimport libraries seperately
+def getMaxROI(atlas_path):
+    import nibabel as nib
+    import numpy as np
+    
+    img = nib.load(atlas_path)
+    data = img.get_fdata()
+    return round(np.max(data))
 
 
 # Note: This function helps to determine the best volume to use as a reference for motion correction.
@@ -679,10 +687,12 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
     preproc.connect(merge, 'merged_file',rename_node, 'in_file')
     preproc.connect(rename_node, 'out_file',datasink, DATATYPE_SUBJECT_DIR+'.@final_out')
 
+    GetMaxROI_node = pe.Node(interface=util.Function(input_names=['atlas_path'], output_names=['max_roi'], function=getMaxROI), name='GetMaxROI')
+    preproc.connect(segment_feed, 'segment', GetMaxROI_node, 'atlas_path')
 
     #the data extraction node takes in the BOLD and template images and extracts the necessary data (average voxel intensity per region, a similarity matrix, and a mapping dictionary)
     CalcSimMatrix_node = pe.Node(interface=util.Function(input_names=['bold_path', 'template_path', 'maxSegVal'], output_names=['avg_arr_file', 'sim_matrix_file', 'mapping_dict_file'], function=CalcSimMatrix), name='CalcSimMatrix')
-    CalcSimMatrix_node.inputs.maxSegVal = MAX_SEGMENT_VAL
+    preproc.connect(GetMaxROI_node, 'max_roi', CalcSimMatrix_node, 'maxSegVal')
     preproc.connect(merge, 'merged_file', CalcSimMatrix_node, 'bold_path')
     preproc.connect(apply_non, 'out_file', CalcSimMatrix_node, 'template_path') # FSL Registation implementation
     # preproc.connect(apply_non, 'output_image', CalcSimMatrix_node, 'template_path')  # ANTS registration implementation
@@ -760,14 +770,16 @@ def main():
 
     ## The following behavior only takes the first T1 seen in the directory. 
     ## The code could be expanded to account for multiple runs
+    patient_func_path = None
     for i in os.listdir(patient_func_dir):
-        if i[-11:] =='func.nii.gz':
+        if i[-11:] =='{}.nii.gz'.format(DATATYPE_FILE_SUFFIX):
             patient_func_path = os.path.join(patient_func_dir, i)
 
-
-    preproc = buildWorkflow(patient_func_path, template_path, segment_path, outDir, args.subject_id[0], TEST_MODE)
-
-    preproc.run()
+    if patient_func_path == None:
+        print('Error: No {} images found for the specified patient. The pipeline cannot proceed. Please ensure that all filenames adhere to the BIDS standard. No NIFTI files with the extension \'_{}.nii.gz\' were detected. Exiting...'.format(DATATYPE_FILE_SUFFIX.upper(), DATATYPE_FILE_SUFFIX))
+    else:
+        preproc = buildWorkflow(patient_func_path, template_path, segment_path, outDir, args.subject_id[0], TEST_MODE)
+        preproc.run()
 
 
 
