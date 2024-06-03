@@ -4,7 +4,6 @@
 #          preprocess BOLD fMRIs and to use those outputs for similarity 
 #          matrix generation.
 #
-# This pipeline is currently being editted to more closely fit Power et al 2012
 #
 # Contact: jor115@pitt.edu
 # Acknowledgments: Ansh Patel from The Hillman Academy contributed to this work.
@@ -24,14 +23,8 @@ import os, sys
 
 DATATYPE_SUBJECT_DIR = 'func'
 DATATYPE_FILE_SUFFIX = 'bold' 
-
-# ******************************************************************************
-# ARGUMENTS AND CONFIGURATIONS
-# ******************************************************************************
-# NOTE: THIS ALLOWS FOR ALL INTERMEDIATE OUTPUTS TO BE SAVED
 SAVE_INTERMEDIATES = True
 scheduleTXT   = '/app/Template/sched.txt'
-
 
 
 def makeParser():
@@ -55,6 +48,8 @@ def makeParser():
                         help='Atlas to be used to identify brain regions in patient space. This is used in conjunction with the template. Please ensure that the atlas is in the same space as the template. Default is the AALv3 template.')
     parser.add_argument('-o','--ourDir', nargs=1, required=True,
                         help='Path to the \'derivatives\' folder or chosen out folder. All results will be submitted to outDir/out/str_preproc/subject_id/...')
+    parser.add_argument('--saveIntermediates', required=False, action='store_true',
+                        help='Saves all intermediate files while pipeline is running.')
     parser.add_argument('--testmode', required=False, action='store_true',
                         help='Activates TEST_MODE to make pipeline finish faster for quicker debugging')
 
@@ -87,22 +82,6 @@ def makeOutDir(outDirName, args, enforceBIDS=True):
         os.makedirs(outDir, exist_ok=True)
 
     return outDir
-
-
-
-# ******************************************************************************
-# HELPER FUNCTIONS
-# ******************************************************************************
-
-#Note: outputs the home directory of the data to output all results to
-def GenerateOutDir(base_outputdir, image_path):
-    import os
-    subj = image_path.split('/')[-3]
-    sess = image_path.split('/')[-2]
-    out_dir = os.path.join(base_outputdir, subj, sess)
-    os.makedirs(out_dir, exist_ok = True)
-
-    return out_dir
 
 
 # Note: collects the TR value from the image and calculates the sigma value for bandpass filtering
@@ -518,7 +497,7 @@ def plotMotionMetrics(fd_metrics_file, dvars_metrics_file):
 # PIPELINE CREATION
 # ******************************************************************************
 
-def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjectID, test=False):
+def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjectID, testmode=False, saveIntermediates=False):
     #creates a pipeline
     preproc = pe.Workflow(name='preproc')
 
@@ -577,7 +556,6 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
     #the apply bet node multiplies the brain mask to the entire BOLD image to apply the brain extraction
     apply_bet = pe.Node(interface=fsl.BinaryMaths(operation = 'mul'), name = 'bet_apply')
     preproc.connect(brain_extract, 'mask_file', apply_bet, 'operand_file')
-    # preproc.connect(brain_extract, 'mask_file', datasink, DATATYPE_SUBJECT_DIR+'.@mask')
     preproc.connect(motion_correct, 'out_file', apply_bet, 'in_file')
 
 
@@ -668,9 +646,10 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
     non_reg.inputs.in_fwhm            = [8, 4, 2, 2]
     non_reg.inputs.subsampling_scheme = [4, 2, 1, 1]
     non_reg.inputs.warp_resolution    = (6, 6, 6)
-    non_reg.inputs.max_nonlin_iter    = [2, 2, 2, 2]
-    # non_reg.inputs.max_nonlin_iter    = [20, 20, 10, 10]
-    # non_reg.inputs.max_nonlin_iter    = [100, 100, 50, 25]
+    non_reg.inputs.max_nonlin_iter    = [20, 20, 10, 10]
+    # if testmode:
+    #     non_reg.inputs.max_nonlin_iter    = [2, 2, 2, 2]
+    # non_reg.inputs.max_nonlin_iter    = [100, 100, 50, 25] #might be too much
     preproc.connect(lin_reg, 'out_file', non_reg, 'in_file')
     preproc.connect(fslroi_node, 'roi_file', non_reg, 'ref_file')
 
@@ -695,44 +674,49 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
     preproc.connect(GetMaxROI_node, 'max_roi', CalcSimMatrix_node, 'maxSegVal')
     preproc.connect(merge, 'merged_file', CalcSimMatrix_node, 'bold_path')
     preproc.connect(apply_non, 'out_file', CalcSimMatrix_node, 'template_path') # FSL Registation implementation
-    # preproc.connect(apply_non, 'output_image', CalcSimMatrix_node, 'template_path')  # ANTS registration implementation
+    
+
+    # Should always be outputted
+    preproc.connect(lin_reg, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@lin_out')
+    preproc.connect(non_reg, 'warped_file', datasink, DATATYPE_SUBJECT_DIR+'.@nlin_out')
+    preproc.connect(apply_lin, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_lin_out')
+    preproc.connect(apply_non, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_nlin_out')
+    preproc.connect(CalcSimMatrix_node, 'avg_arr_file', datasink, DATATYPE_SUBJECT_DIR+'.@avgBoldSigPerRegion')
+    preproc.connect(CalcSimMatrix_node, 'sim_matrix_file', datasink, DATATYPE_SUBJECT_DIR+'.@similarityMatrix')
+    preproc.connect(plotmotionmetrics_node, 'outfile_path', datasink, DATATYPE_SUBJECT_DIR+'.@fdvsdvars_plot')
 
 
 
     # # ******************************************************************************
     # # IF MEMORY IS PLENTIFUL, THEN SAVE EVERYTHING
-    SAVE_INTERMEDIATES = True
-    if(SAVE_INTERMEDIATES):
-        # preproc.connect(segment_feed, 'segment', datasink, DATATYPE_SUBJECT_DIR+'.@OGSeg')
-        # preproc.connect(motion_correct, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_out')
-        # preproc.connect(motion_correct, 'par_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_par')
-        # preproc.connect(motion_correct, 'rms_files', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_rms')
-        # preproc.connect(brain_extract, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@be_out')
+    if(saveIntermediates):
+        preproc.connect(segment_feed, 'segment', datasink, DATATYPE_SUBJECT_DIR+'.@OGSeg')
+        preproc.connect(motion_correct, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_out')
+        preproc.connect(motion_correct, 'par_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_par')
+        preproc.connect(motion_correct, 'rms_files', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_rms')
+        preproc.connect(brain_extract, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@be_out')
         preproc.connect(apply_bet, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@applybe_out')
-        # preproc.connect(normalization_node, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@normalization')
-        # preproc.connect(artifact, 'outlier_files', datasink, DATATYPE_SUBJECT_DIR+'.@artdet_outs')
-        # preproc.connect(calcOutliers, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@calcFDOuts_outs')
-        # preproc.connect(artifact_extract, 'rejectionsFile', datasink, DATATYPE_SUBJECT_DIR+'.@rejects_summ')
-        # preproc.connect(merge, 'merged_file', datasink, DATATYPE_SUBJECT_DIR+'.@merge_out')
-        # preproc.connect(bias_correct, 'bias_field', datasink, DATATYPE_SUBJECT_DIR+'.@bias')
-        # preproc.connect(regressNode, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@residual_out')
-        # preproc.connect(apply_bias, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@appbias_out')
-        # preproc.connect(band_pass, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@bandpass_out')
-        # preproc.connect(smooth, 'smoothed_file', datasink, DATATYPE_SUBJECT_DIR+'.@smooth_out')
+        preproc.connect(normalization_node, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@normalization')
+        preproc.connect(artifact, 'outlier_files', datasink, DATATYPE_SUBJECT_DIR+'.@artdet_outs')
+        preproc.connect(calcOutliers, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@calcFDOuts_outs')
+        preproc.connect(artifact_extract, 'rejectionsFile', datasink, DATATYPE_SUBJECT_DIR+'.@rejects_summ')
+        preproc.connect(merge, 'merged_file', datasink, DATATYPE_SUBJECT_DIR+'.@merge_out')
+        preproc.connect(bias_correct, 'bias_field', datasink, DATATYPE_SUBJECT_DIR+'.@bias')
+        preproc.connect(regressNode, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@residual_out')
+        preproc.connect(apply_bias, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@appbias_out')
+        preproc.connect(band_pass, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@bandpass_out')
+        preproc.connect(smooth, 'smoothed_file', datasink, DATATYPE_SUBJECT_DIR+'.@smooth_out')
         preproc.connect(lin_reg, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@lin_out')
         preproc.connect(lin_reg, 'out_matrix_file', datasink, DATATYPE_SUBJECT_DIR+'.@lin_mat')
         preproc.connect(non_reg, 'warped_file', datasink, DATATYPE_SUBJECT_DIR+'.@nlin_out')
         preproc.connect(non_reg, 'field_file', datasink, DATATYPE_SUBJECT_DIR+'.@nlin_mat')
         preproc.connect(apply_lin, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_lin_out')
         preproc.connect(apply_non, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_nlin_out')
-        # preproc.connect(fdnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@fd_out')
-        # preproc.connect(fdnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@fd_metrics')
-        # preproc.connect(dvarsnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_out')
-        # preproc.connect(dvarsnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_metrics')
-        # preproc.connect(dvarsnode, 'outplot_path', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_plot')
-        preproc.connect(plotmotionmetrics_node, 'outfile_path', datasink, DATATYPE_SUBJECT_DIR+'.@fdvsdvars_plot')
-        preproc.connect(CalcSimMatrix_node, 'avg_arr_file', datasink, DATATYPE_SUBJECT_DIR+'.@avgBoldSigPerRegion')
-        preproc.connect(CalcSimMatrix_node, 'sim_matrix_file', datasink, DATATYPE_SUBJECT_DIR+'.@similarityMatrix')
+        preproc.connect(fdnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@fd_out')
+        preproc.connect(fdnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@fd_metrics')
+        preproc.connect(dvarsnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_out')
+        preproc.connect(dvarsnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_metrics')
+        preproc.connect(dvarsnode, 'outplot_path', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_plot')
         preproc.connect(CalcSimMatrix_node, 'mapping_dict_file', datasink, DATATYPE_SUBJECT_DIR+'.@MappingDict')
     # # ******************************************************************************
 
@@ -753,9 +737,8 @@ def main():
     segment_path  = vetArgNone(args.segment, '/app/Template/AAL3v1_CombinedThalami.nii.gz') #path in docker container
     enforceBIDS   = True
     outDir        = makeOutDir(outDirName, args, enforceBIDS)
-    TEST_MODE     = args.testmode
 
-    if TEST_MODE:
+    if args.testmode:
         print("!!YOU ARE USING TEST MODE!!")
 
     for i in os.listdir(args.parentDir[0]):
@@ -778,7 +761,7 @@ def main():
     if patient_func_path == None:
         print('Error: No {} images found for the specified patient. The pipeline cannot proceed. Please ensure that all filenames adhere to the BIDS standard. No NIFTI files with the extension \'_{}.nii.gz\' were detected. Exiting...'.format(DATATYPE_FILE_SUFFIX.upper(), DATATYPE_FILE_SUFFIX))
     else:
-        preproc = buildWorkflow(patient_func_path, template_path, segment_path, outDir, args.subject_id[0], TEST_MODE)
+        preproc = buildWorkflow(patient_func_path, template_path, segment_path, outDir, args.subject_id[0], args.testmode, args.saveIntermediates)
         preproc.run()
 
 
