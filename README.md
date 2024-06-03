@@ -17,7 +17,7 @@ These steps include (but are not limited to):
 - **Rigid Body Realignment**: Correcting for patient movement during the scan.
 - **Median 1000 Normalization**: Normalizing the voxel intensity distribution to its median.
 - **Demeaning**: Centering the data around zero.
-- **Motion Parameter Regression**: Removing 6 motion parameters and their derivatives (total of 12).
+- **Motion Parameter Regression**: Removing 6 motion parameters, their squares, derivatives, and derivative's squares (total of 24).
 - **Bandpass Filtering**: Applying a bandpass filter to the data.
 - **Spatial Smoothin**g: Applying a smoothing filter to the data.
 - **Registration**: Aligning an atlas to the patient space for standardized anatomical referencing.
