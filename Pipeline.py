@@ -19,6 +19,7 @@ import nipype.interfaces.utility as util    # utility
 import nipype.pipeline.engine as pe         # pypeline engine
 import numpy as np
 import os, sys
+import time
 
 
 DATATYPE_SUBJECT_DIR = 'func'
@@ -758,7 +759,10 @@ def main():
         print('Error: No {} images found for the specified patient. The pipeline cannot proceed. Please ensure that all filenames adhere to the BIDS standard. No NIFTI files with the extension \'_{}.nii.gz\' were detected. Exiting...'.format(DATATYPE_FILE_SUFFIX.upper(), DATATYPE_FILE_SUFFIX))
     else:
         preproc = buildWorkflow(patient_func_path, template_path, segment_path, outDir, args.subject_id[0], args.testmode, args.saveIntermediates)
+        tic = time.time()
         preproc.run()
+        toc = time.time()
+        print('\nElapsed Time to Preprocess: {}s\n'.format(tic-toc))
 
 
 
