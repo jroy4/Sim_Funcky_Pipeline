@@ -626,39 +626,42 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
     preproc.connect(bestRef_node, 'bestReference', fslroi_node, 't_min')
 
 
-    #the linear registration node registers the standard brain into BOLD space using the BOLD image as reference and only using linear registration
-    lin_reg = pe.Node(interface=fsl.FLIRT(), name='linear_reg')
-    lin_reg.inputs.searchr_x = [-45,45]
-    lin_reg.inputs.searchr_y = [-45,45]
-    lin_reg.inputs.searchr_z = [-45,45]
-    preproc.connect(fslroi_node, 'roi_file', lin_reg, 'reference')
-    preproc.connect(template_feed, 'template', lin_reg, 'in_file')
+    # ants for both linear and nonlinear registration
+    antsReg = pe.Node(interface=ants.Registration(), name='antsRegistration')
+    antsReg.inputs.transforms = ['Affine', 'SyN']
+    antsReg.inputs.transform_parameters = [(2.0,), (0.25, 3.0, 0.0)]
+    antsReg.inputs.number_of_iterations = [[1500, 200], [100, 50, 30]]
+    if testmode==True:
+        antsReg.inputs.number_of_iterations = [[5, 5], [5, 5, 5]]
+    antsReg.inputs.dimension = 3
+    antsReg.inputs.write_composite_transform = False
+    antsReg.inputs.collapse_output_transforms = False
+    antsReg.inputs.initialize_transforms_per_stage = False
+    antsReg.inputs.metric = ['Mattes']*2
+    antsReg.inputs.metric_weight = [1]*2 # Default (value ignored currently by ANTs)
+    antsReg.inputs.radius_or_number_of_bins = [32]*2
+    antsReg.inputs.sampling_strategy = ['Random', None]
+    antsReg.inputs.sampling_percentage = [0.05, None]
+    antsReg.inputs.convergence_threshold = [1.e-8, 1.e-9]
+    antsReg.inputs.convergence_window_size = [20]*2
+    antsReg.inputs.smoothing_sigmas = [[1,0], [2,1,0]]
+    antsReg.inputs.sigma_units = ['vox'] * 2
+    antsReg.inputs.shrink_factors = [[2,1], [3,2,1]]
+    antsReg.inputs.use_histogram_matching = [True, True] # This is the default
+    antsReg.inputs.output_warped_image = 'output_warped_image.nii.gz'
 
-    #the apply_lin node applies the same linear registration as the standard brain to the template segmentation
-    apply_lin = pe.Node(interface=fsl.ApplyXFM(interp='nearestneighbour'), name='apply_linear')
-    preproc.connect(segment_feed, 'segment', apply_lin, 'in_file')
-    preproc.connect(fslroi_node, 'roi_file', apply_lin, 'reference')
-    preproc.connect(lin_reg, 'out_matrix_file', apply_lin, 'in_matrix_file')
+    preproc.connect(template_feed, 'template', antsReg, 'moving_image')
+    preproc.connect(fslroi_node, 'roi_file', antsReg, 'fixed_image')
 
-    # FORMER FSL REGISTRATION IMPLEMENTATION
-    #the non-linear registration node registers the linear registered brain to match the BOLD image using non-linear registration
-    non_reg = pe.Node(interface=fsl.FNIRT(), name='nonlinear_reg')
-    non_reg.inputs.in_fwhm            = [8, 4, 2, 2]
-    non_reg.inputs.subsampling_scheme = [4, 2, 1, 1]
-    non_reg.inputs.warp_resolution    = (6, 6, 6)
-    non_reg.inputs.max_nonlin_iter    = [20, 20, 10, 10]
-    # if testmode:
-    #     non_reg.inputs.max_nonlin_iter    = [2, 2, 2, 2]
-    # non_reg.inputs.max_nonlin_iter    = [100, 100, 50, 25] #might be too much
-    preproc.connect(lin_reg, 'out_file', non_reg, 'in_file')
-    preproc.connect(fslroi_node, 'roi_file', non_reg, 'ref_file')
+    antsAppTrfm = pe.Node(interface=ants.ApplyTransforms(), name='antsApplyTransform')
+    antsAppTrfm.inputs.dimension = 3
+    antsAppTrfm.inputs.interpolation = 'NearestNeighbor'
+    antsAppTrfm.inputs.default_value = 0
 
-    # FORMER FSL REGISTRATION IMPLEMENTATION
-    #the apply_non node applies the same non-linear registration as the standard brain to the template segmentation
-    apply_non = pe.Node(interface=fsl.ApplyWarp(interp='nn'), name='apply_nonlin')
-    preproc.connect(apply_lin, 'out_file', apply_non, 'in_file')
-    preproc.connect(fslroi_node, 'roi_file', apply_non, 'ref_file')
-    preproc.connect(non_reg, 'field_file', apply_non, 'field_file')
+    preproc.connect(segment_feed, 'segment', antsAppTrfm, 'input_image')
+    preproc.connect(fslroi_node, 'roi_file', antsAppTrfm, 'reference_image')
+    preproc.connect(antsReg, 'reverse_forward_transforms', antsAppTrfm, 'transforms')
+    preproc.connect(antsReg, 'reverse_forward_invert_flags', antsAppTrfm, 'invert_transform_flags')
 
     rename_node = pe.Node(interface=util.Rename(), name='Rename')
     rename_node.inputs.keep_ext = True
@@ -673,14 +676,12 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
     CalcSimMatrix_node = pe.Node(interface=util.Function(input_names=['bold_path', 'template_path', 'maxSegVal'], output_names=['avg_arr_file', 'sim_matrix_file', 'mapping_dict_file'], function=CalcSimMatrix), name='CalcSimMatrix')
     preproc.connect(GetMaxROI_node, 'max_roi', CalcSimMatrix_node, 'maxSegVal')
     preproc.connect(merge, 'merged_file', CalcSimMatrix_node, 'bold_path')
-    preproc.connect(apply_non, 'out_file', CalcSimMatrix_node, 'template_path') # FSL Registation implementation
+    preproc.connect(antsAppTrfm, 'output_image', CalcSimMatrix_node, 'template_path') # FSL Registation implementation
     
 
     # Should always be outputted
-    preproc.connect(lin_reg, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@lin_out')
-    preproc.connect(non_reg, 'warped_file', datasink, DATATYPE_SUBJECT_DIR+'.@nlin_out')
-    preproc.connect(apply_lin, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_lin_out')
-    preproc.connect(apply_non, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_nlin_out')
+    preproc.connect(antsReg, 'warped_image', datasink, '{}.@warpedTemplate'.format(DATATYPE_SUBJECT_DIR))
+    preproc.connect(antsAppTrfm, 'output_image', datasink, '{}.@warpedAtlas'.format(DATATYPE_SUBJECT_DIR))
     preproc.connect(CalcSimMatrix_node, 'avg_arr_file', datasink, DATATYPE_SUBJECT_DIR+'.@avgBoldSigPerRegion')
     preproc.connect(CalcSimMatrix_node, 'sim_matrix_file', datasink, DATATYPE_SUBJECT_DIR+'.@similarityMatrix')
     preproc.connect(plotmotionmetrics_node, 'outfile_path', datasink, DATATYPE_SUBJECT_DIR+'.@fdvsdvars_plot')
@@ -706,12 +707,7 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
         preproc.connect(apply_bias, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@appbias_out')
         preproc.connect(band_pass, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@bandpass_out')
         preproc.connect(smooth, 'smoothed_file', datasink, DATATYPE_SUBJECT_DIR+'.@smooth_out')
-        preproc.connect(lin_reg, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@lin_out')
-        preproc.connect(lin_reg, 'out_matrix_file', datasink, DATATYPE_SUBJECT_DIR+'.@lin_mat')
-        preproc.connect(non_reg, 'warped_file', datasink, DATATYPE_SUBJECT_DIR+'.@nlin_out')
-        preproc.connect(non_reg, 'field_file', datasink, DATATYPE_SUBJECT_DIR+'.@nlin_mat')
-        preproc.connect(apply_lin, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_lin_out')
-        preproc.connect(apply_non, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_nlin_out')
+        preproc.connect(antsAppTrfm, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_nlin_out')
         preproc.connect(fdnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@fd_out')
         preproc.connect(fdnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@fd_metrics')
         preproc.connect(dvarsnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_out')
