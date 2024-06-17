@@ -119,21 +119,22 @@ def findBestReference(in_file, scheduleTXT, derivatives_dir):
     entryname = os.path.basename(in_file)
     file_name = "best_frames.json"
     # Check if the file exists in the directory
-    file_path = os.path.join(derivatives_dir, file_name)
-    if os.path.exists(file_path):
+    bestFramesfile_path = os.path.join(derivatives_dir, file_name)
+    if os.path.exists(bestFramesfile_path):
 
-        with open(file_path, 'r') as json_file:
+        with open(bestFramesfile_path, 'r') as json_file:
             data_dict = json.load(json_file)
 
-        print('A cached file containing the best frames of several scans already exists: {}'.format(file_path))
+        print('A cached file containing the best frames of several scans already exists: {}'.format(bestFramesfile_path))
 
         if entryname in data_dict.keys():
             print('The best frame for this file was previously calculated and will be used now.')
-            return data_dict[entryname]
+            return data_dict[entryname], bestFramesfile_path
 
     else:
         print('A best frames cache file does not exist. It will be made now.')
-        with open(file_path, 'w') as file:
+        bestFramesfile_path = os.path.join(os.getcwd(), file_name)
+        with open(bestFramesfile_path, 'w') as file:
             file.write("{}")
         print("File created.")
         data_dict = {}
@@ -171,10 +172,10 @@ def findBestReference(in_file, scheduleTXT, derivatives_dir):
     data_dict[entryname] = bestVol
 
     print("This calculation will be saved in cache...")
-    with open(file_path, 'w') as json_file:
+    with open(bestFramesfile_path, 'w') as json_file:
         json.dump(data_dict, json_file)
 
-    return bestVol
+    return bestVol, bestFramesfile_path
 
 
 # Note: This function is used normalize the median of the data to 1000
@@ -534,7 +535,7 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
     segment_feed.inputs.segment = segment_path
 
     # # finds the best frame to use as a reference
-    bestRef_node = pe.Node(interface=util.Function(input_names=['in_file', 'scheduleTXT', 'derivatives_dir'], output_names=['bestReference'], function=findBestReference), name='findBestReference')
+    bestRef_node = pe.Node(interface=util.Function(input_names=['in_file', 'scheduleTXT', 'derivatives_dir'], output_names=['bestReference', 'bestFramesFile'], function=findBestReference), name='findBestReference')
     bestRef_node.inputs.scheduleTXT = scheduleTXT
     bestRef_node.inputs.derivatives_dir = os.path.join(datasink.inputs.base_directory, DATATYPE_SUBJECT_DIR)
     preproc.connect(input_node, 'func', bestRef_node, 'in_file')
@@ -681,6 +682,7 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
     
 
     # Should always be outputted
+    preproc.connect(bestRef_node, 'bestFramesFile', datasink, '{}.@bestFramesFile'.format(DATATYPE_SUBJECT_DIR))
     preproc.connect(antsReg, 'warped_image', datasink, '{}.@warpedTemplate'.format(DATATYPE_SUBJECT_DIR))
     preproc.connect(antsAppTrfm, 'output_image', datasink, '{}.@warpedAtlas'.format(DATATYPE_SUBJECT_DIR))
     preproc.connect(CalcSimMatrix_node, 'avg_arr_file', datasink, DATATYPE_SUBJECT_DIR+'.@avgBoldSigPerRegion')
