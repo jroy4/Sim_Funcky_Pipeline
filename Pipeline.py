@@ -68,11 +68,11 @@ def vetArgNone(variable, default):
 def makeOutDir(outDirName, args, enforceBIDS=True):
     outDir = ''
     if os.path.basename(args.ourDir[0]) == 'derivatives':
-        outDir = os.path.join(args.ourDir[0], 'out', outDirName, args.subject_id[0])
+        outDir = os.path.join(args.ourDir[0], outDirName, args.subject_id[0])
     elif args.ourDir[0] == args.parentDir[0]:
         print("Your outdir is the same as your parent dir!")
         print("Making a derivatives folder for you...")
-        outDir = os.path.join(args.ourDir[0], 'derivatives', 'out', outDirName, args.subject_id[0])
+        outDir = os.path.join(args.ourDir[0], 'derivatives', outDirName, args.subject_id[0])
     elif os.path.basename(args.ourDir[0]) == args.subject_id[0]:
         print('The given out directory seems to be at a patient level rather than parent level')
         print('It is hard to determine if your out directory is BIDS compliant')
