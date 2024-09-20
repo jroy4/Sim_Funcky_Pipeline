@@ -47,7 +47,9 @@ def makeParser():
                         help='Template to be used to register into patient space. Default is MNI152lin_T1_2mm_brain.nii.gz')
     parser.add_argument('-seg','--segment', nargs=1, required=False,
                         help='Atlas to be used to identify brain regions in patient space. This is used in conjunction with the template. Please ensure that the atlas is in the same space as the template. Default is the AALv3 template.')
-    parser.add_argument('-o','--ourDir', nargs=1, required=True,
+    parser.add_argument('-sched','--scheduleTxt', nargs=1, required=False,
+                        help='File needed as input to calculate best frame. Default is in Template directory')
+    parser.add_argument('-o','--outDir', nargs=1, required=True,
                         help='Path to the \'derivatives\' folder or chosen out folder. All results will be submitted to outDir/out/str_preproc/subject_id/...')
     parser.add_argument('--saveIntermediates', required=False, action='store_true',
                         help='Saves all intermediate files while pipeline is running.')
@@ -56,6 +58,7 @@ def makeParser():
 
     return parser 
 
+
 # This was developed instead of using the default parameter in the argparser
 # bc argparser only returns a list or None and you can't do None[0]. 
 # Not all variables need a default but need to be inspected whether they are None
@@ -63,24 +66,36 @@ def vetArgNone(variable, default):
     if variable==None:
         return default
     else:
-        return variable[0]
+        return os.path.abspath(os.path.expanduser(variable[0]))
 
-def makeOutDir(outDirName, args, enforceBIDS=True):
-    outDir = ''
-    if os.path.basename(args.ourDir[0]) == 'derivatives':
-        outDir = os.path.join(args.ourDir[0], outDirName, args.subject_id[0])
-    elif args.ourDir[0] == args.parentDir[0]:
-        print("Your outdir is the same as your parent dir!")
-        print("Making a derivatives folder for you...")
-        outDir = os.path.join(args.ourDir[0], 'derivatives', outDirName, args.subject_id[0])
-    elif os.path.basename(args.ourDir[0]) == args.subject_id[0]:
-        print('The given out directory seems to be at a patient level rather than parent level')
-        print('It is hard to determine if your out directory is BIDS compliant')
-    elif 'derivatives' in args.ourDir[0]:
-        outDir = os.path.join(args.ourDir[0], outDirName, args.subject_id[0])
+def makeOutDir(outDirName, args, enforceBIDS=True, filename=None):
+    # outDir = ''
+    # if os.path.basename(args.outDir[0]) == 'derivatives':
+    #     outDir = os.path.join(args.outDir[0], outDirName, args.subject_id[0])
+    # elif args.outDir[0] == args.parentDir[0]:
+    #     print("Your outdir is the same as your parent dir!")
+    #     print("Making a derivatives folder for you...")
+    #     outDir = os.path.join(args.outDir[0], 'derivatives', outDirName, args.subject_id[0])
+    # elif os.path.basename(args.outDir[0]) == args.subject_id[0]:
+    #     print('The given out directory seems to be at a patient level rather than parent level')
+    #     print('It is hard to determine if your out directory is BIDS compliant')
+    # elif 'derivatives' in args.outDir[0]:
+    #     outDir = os.path.join(args.outDir[0], outDirName, args.subject_id[0])
+    outDirPath_parents = args.outDir[0]
+    if '~' in outDirPath_parents:
+        outDirPath_parents = os.path.expanduser(outDirPath_parents)
+
+    outDirPath_parents = os.path.abspath(outDirPath_parents)
+
+    if filename == None:
+        outDir = os.path.join(outDirPath_parents, outDirName, args.subject_id[0], DATATYPE_SUBJECT_DIR)
+    else:
+        outDir = os.path.join(outDirPath_parents, outDirName, args.subject_id[0], DATATYPE_SUBJECT_DIR, filename) #accounts for multiple runs/tasks
 
     if not os.path.exists(outDir):
         os.makedirs(outDir, exist_ok=True)
+
+    print("Outputting results to path: {}".format(outDir))
 
     return outDir
 
@@ -107,7 +122,7 @@ def getMaxROI(atlas_path):
 
 
 # Note: This function helps to determine the best volume to use as a reference for motion correction.
-def findBestReference(in_file, scheduleTXT, derivatives_dir):
+def findBestReference(in_file, scheduleTXT, derivatives_dir, testmode = False):
     import nibabel as nib
     import numpy as np
     from tqdm import tqdm
@@ -115,6 +130,9 @@ def findBestReference(in_file, scheduleTXT, derivatives_dir):
     import json
     sys.path.append('/data/')
     import pipeline_functions as pf
+
+    if testmode:
+        return 0, ''
 
     entryname = os.path.basename(in_file)
     file_name = "best_frames.json"
@@ -505,219 +523,221 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
 
     #the input node, which takes the input image from infosource and feeds it into the rest of the pipeline
     input_node = pe.Node(interface=util.IdentityInterface(fields=['func']),name='input')
-    input_node.inputs.func = patient_func_path
+    input_node.inputs.func = patient_func_path    
 
 
     #the datasink node stores the outputs of all operations
     datasink = pe.Node(nio.DataSink(parameterization=False), name='sinker')
     datasink.inputs.base_directory = outDir
+    DATASINK_PREFIX = os.path.basename(patient_func_path).split('.')[0] # filename to prevent collisions from multiple runs
 
 
     reorient2std_node = pe.Node(interface=fsl.Reorient2Std(), name='reorient2std')
     preproc.connect(input_node, 'func', reorient2std_node, 'in_file')
-    preproc.connect(reorient2std_node, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@reorient')
 
 
-    #this node accesses the calculate_sigma function to take the input image and output its sigma value
-    sigma_value = pe.Node(interface=util.Function(input_names=['image_path', 'hp_frequency', 'lp_frequency'], output_names=['sigma_value_hp', 'sigma_value_lp'], function=calculate_sigma), name='calculate_sigmas')
-    sigma_value.inputs.hp_frequency=0.009
-    sigma_value.inputs.lp_frequency=0.08
-    preproc.connect(reorient2std_node, 'out_file', sigma_value, 'image_path')
+    # #this node accesses the calculate_sigma function to take the input image and output its sigma value
+    # sigma_value = pe.Node(interface=util.Function(input_names=['image_path', 'hp_frequency', 'lp_frequency'], output_names=['sigma_value_hp', 'sigma_value_lp'], function=calculate_sigma), name='calculate_sigmas')
+    # sigma_value.inputs.hp_frequency=0.009
+    # sigma_value.inputs.lp_frequency=0.08
+    # preproc.connect(reorient2std_node, 'out_file', sigma_value, 'image_path')
 
 
-    #the template node feeds a standard brain into the linear registration node to be registered into BOLD space
-    template_feed = pe.Node(interface=util.IdentityInterface(fields=['template']), name='template_MNI')
-    template_feed.inputs.template = template_path
+    # #the template node feeds a standard brain into the linear registration node to be registered into BOLD space
+    # template_feed = pe.Node(interface=util.IdentityInterface(fields=['template']), name='template_MNI')
+    # template_feed.inputs.template = template_path
 
 
-    #the segment_feed node feeds a template segmentation into the linear registration node to be registered into BOLD space
-    segment_feed = pe.Node(interface=util.IdentityInterface(fields=['segment']), name='segment_AAL')
-    segment_feed.inputs.segment = segment_path
+    # #the segment_feed node feeds a template segmentation into the linear registration node to be registered into BOLD space
+    # segment_feed = pe.Node(interface=util.IdentityInterface(fields=['segment']), name='segment_AAL')
+    # segment_feed.inputs.segment = segment_path
 
-    # # finds the best frame to use as a reference
-    bestRef_node = pe.Node(interface=util.Function(input_names=['in_file', 'scheduleTXT', 'derivatives_dir'], output_names=['bestReference', 'bestFramesFile'], function=findBestReference), name='findBestReference')
-    bestRef_node.inputs.scheduleTXT = scheduleTXT
-    bestRef_node.inputs.derivatives_dir = os.path.join(datasink.inputs.base_directory, DATATYPE_SUBJECT_DIR)
-    preproc.connect(input_node, 'func', bestRef_node, 'in_file')
+    # # # finds the best frame to use as a reference
+    # bestRef_node = pe.Node(interface=util.Function(input_names=['in_file', 'scheduleTXT', 'derivatives_dir', 'testmode'], output_names=['bestReference', 'bestFramesFile'], function=findBestReference), name='findBestReference')
+    # bestRef_node.inputs.scheduleTXT = scheduleTXT
+    # bestRef_node.inputs.derivatives_dir = os.path.join(datasink.inputs.base_directory)
+    # bestRef_node.inputs.testmode = testmode
+    # preproc.connect(input_node, 'func', bestRef_node, 'in_file')
 
-    #the MCFLIRT node motion corrects the image
-    motion_correct = pe.Node(interface=fsl.MCFLIRT(save_plots = True, save_rms= True), name='McFLIRT')
-    preproc.connect(reorient2std_node, 'out_file', motion_correct, 'in_file')
-    preproc.connect(bestRef_node, 'bestReference', motion_correct, 'ref_vol')
+    # #the MCFLIRT node motion corrects the image
+    # motion_correct = pe.Node(interface=fsl.MCFLIRT(save_plots = True, save_rms= True), name='McFLIRT')
+    # preproc.connect(reorient2std_node, 'out_file', motion_correct, 'in_file')
+    # preproc.connect(bestRef_node, 'bestReference', motion_correct, 'ref_vol')
 
-    fslroi_node_2 = pe.Node(interface=fsl.ExtractROI(t_size=1), name = 'extractRoi_2')
-    preproc.connect(motion_correct, 'out_file', fslroi_node_2, 'in_file')
-    preproc.connect(bestRef_node, 'bestReference', fslroi_node_2, 't_min')
+    # fslroi_node_2 = pe.Node(interface=fsl.ExtractROI(t_size=1), name = 'extractRoi_2')
+    # preproc.connect(motion_correct, 'out_file', fslroi_node_2, 'in_file')
+    # preproc.connect(bestRef_node, 'bestReference', fslroi_node_2, 't_min')
 
-    #the brain extraction node removes the nonbrain tissue and extracts the brain from the MRI image
-    brain_extract = pe.Node(interface=fsl.BET(frac=0.45, mask=True, robust=True), name='bet')
-    # functional=True,
-    preproc.connect(fslroi_node_2, 'roi_file', brain_extract, 'in_file')
-
-
-    #the apply bet node multiplies the brain mask to the entire BOLD image to apply the brain extraction
-    apply_bet = pe.Node(interface=fsl.BinaryMaths(operation = 'mul'), name = 'bet_apply')
-    preproc.connect(brain_extract, 'mask_file', apply_bet, 'operand_file')
-    preproc.connect(motion_correct, 'out_file', apply_bet, 'in_file')
+    # #the brain extraction node removes the nonbrain tissue and extracts the brain from the MRI image
+    # brain_extract = pe.Node(interface=fsl.BET(frac=0.45, mask=True, robust=True), name='bet')
+    # # functional=True,
+    # preproc.connect(fslroi_node_2, 'roi_file', brain_extract, 'in_file')
 
 
-    # we normalize the brain to 1000 as recommended by Power et al, however we normalize to median instead of the mode
-    normalization_node = pe.Node(interface=util.Function(input_names=['in_file', 'mask_file'], output_names=['out_file'], function=median_1000_normalization), name='Median1000Normalization')
-    preproc.connect(apply_bet, 'out_file', normalization_node, 'in_file')
-    preproc.connect(brain_extract, 'mask_file', normalization_node, 'mask_file')
+    # #the apply bet node multiplies the brain mask to the entire BOLD image to apply the brain extraction
+    # apply_bet = pe.Node(interface=fsl.BinaryMaths(operation = 'mul'), name = 'bet_apply')
+    # preproc.connect(brain_extract, 'mask_file', apply_bet, 'operand_file')
+    # preproc.connect(motion_correct, 'out_file', apply_bet, 'in_file')
 
 
-    # calculate the framewise displacement between successive frames to remove jerks
-    fdnode = pe.Node(interface=util.Function(input_names=['in_file', 'mask'], output_names=['outfile', 'outmetric'], function=MO_FD_Subprocess), name='fd')
-    preproc.connect(apply_bet, 'out_file', fdnode, 'in_file')
-    preproc.connect(brain_extract, 'mask_file', fdnode, 'mask')
+    # # we normalize the brain to 1000 as recommended by Power et al, however we normalize to median instead of the mode
+    # normalization_node = pe.Node(interface=util.Function(input_names=['in_file', 'mask_file'], output_names=['out_file'], function=median_1000_normalization), name='Median1000Normalization')
+    # preproc.connect(apply_bet, 'out_file', normalization_node, 'in_file')
+    # preproc.connect(brain_extract, 'mask_file', normalization_node, 'mask_file')
 
 
-    # expand 6 motion parameters to 24
-    expandParNode = pe.Node(interface=util.Function(input_names=['par_file'], output_names=['out_file'], function=expandMotionParameters), name='ExpandMotionParameters')
-    preproc.connect(motion_correct, 'par_file', expandParNode, 'par_file')
-
-    #this node will regress away the headmotion parameters and return the residuals
-    regressNode = pe.Node(interface=util.Function(input_names=['in_file', 'par_file'], output_names=['out_file'], function=regressHeadMotion), name='RegressMotionParameters')
-    preproc.connect(normalization_node, 'out_file', regressNode, 'in_file')
-    preproc.connect(expandParNode, 'out_file', regressNode, 'par_file')
+    # # calculate the framewise displacement between successive frames to remove jerks
+    # fdnode = pe.Node(interface=util.Function(input_names=['in_file', 'mask'], output_names=['outfile', 'outmetric'], function=MO_FD_Subprocess), name='fd')
+    # preproc.connect(apply_bet, 'out_file', fdnode, 'in_file')
+    # preproc.connect(brain_extract, 'mask_file', fdnode, 'mask')
 
 
-    #the bandpass filtering node filters out extraneous frequencies from the MRI image
-    band_pass = pe.Node(interface=fsl.TemporalFilter(), name='bandpass_filtering')
-    preproc.connect(sigma_value, 'sigma_value_hp', band_pass, 'highpass_sigma')
-    preproc.connect(sigma_value, 'sigma_value_lp', band_pass, 'lowpass_sigma')
-    preproc.connect(regressNode, 'out_file', band_pass, 'in_file')
+    # # expand 6 motion parameters to 24
+    # expandParNode = pe.Node(interface=util.Function(input_names=['par_file'], output_names=['out_file'], function=expandMotionParameters), name='ExpandMotionParameters')
+    # preproc.connect(motion_correct, 'par_file', expandParNode, 'par_file')
 
-    #the smoothing node smooths the BOLD image. The 6mm fwhm informed by Power et al.
-    smooth = pe.Node(interface=fsl.Smooth(), name='smoothing')
-    smooth.inputs.fwhm = 6.0
-    preproc.connect(band_pass, 'out_file', smooth, 'in_file')
+    # #this node will regress away the headmotion parameters and return the residuals
+    # regressNode = pe.Node(interface=util.Function(input_names=['in_file', 'par_file'], output_names=['out_file'], function=regressHeadMotion), name='RegressMotionParameters')
+    # preproc.connect(normalization_node, 'out_file', regressNode, 'in_file')
+    # preproc.connect(expandParNode, 'out_file', regressNode, 'par_file')
 
 
-    #a custom function to calculate dvars as indicated by Power et al. We noticed that FSL's motionoutlier renormalized before calculating dvars, which is not desirable here
-    dvarsnode = pe.Node(interface=util.Function(input_names=['in_file', 'mask'], output_names=['outfile', 'outmetric', 'outplot_path'], function=MO_DVARS_Subprocess), name='dvars')
-    preproc.connect(smooth, 'smoothed_file', dvarsnode, 'in_file')
-    preproc.connect(brain_extract, 'mask_file', dvarsnode, 'mask')
+    # #the bandpass filtering node filters out extraneous frequencies from the MRI image
+    # band_pass = pe.Node(interface=fsl.TemporalFilter(), name='bandpass_filtering')
+    # preproc.connect(sigma_value, 'sigma_value_hp', band_pass, 'highpass_sigma')
+    # preproc.connect(sigma_value, 'sigma_value_lp', band_pass, 'lowpass_sigma')
+    # preproc.connect(regressNode, 'out_file', band_pass, 'in_file')
+
+    # #the smoothing node smooths the BOLD image. The 6mm fwhm informed by Power et al.
+    # smooth = pe.Node(interface=fsl.Smooth(), name='smoothing')
+    # smooth.inputs.fwhm = 6.0
+    # preproc.connect(band_pass, 'out_file', smooth, 'in_file')
 
 
-    # a custom function to plot dvars values against fd values
-    plotmotionmetrics_node = pe.Node(interface=util.Function(input_names=['fd_metrics_file', 'dvars_metrics_file'], output_names=['outfile_path'], function=plotMotionMetrics), name='plot_fd_vs_dvars')
-    preproc.connect(fdnode, 'outmetric', plotmotionmetrics_node, 'fd_metrics_file')
-    preproc.connect(dvarsnode, 'outmetric', plotmotionmetrics_node, 'dvars_metrics_file')
+    # #a custom function to calculate dvars as indicated by Power et al. We noticed that FSL's motionoutlier renormalized before calculating dvars, which is not desirable here
+    # dvarsnode = pe.Node(interface=util.Function(input_names=['in_file', 'mask'], output_names=['outfile', 'outmetric', 'outplot_path'], function=MO_DVARS_Subprocess), name='dvars')
+    # preproc.connect(smooth, 'smoothed_file', dvarsnode, 'in_file')
+    # preproc.connect(brain_extract, 'mask_file', dvarsnode, 'mask')
 
 
-    #the split node splits the 4D BOLD image into its contituents 3D frames to allow certain timeframes to be removed
-    split = pe.Node(interface=fsl.Split(dimension='t'), name = 'splitter')
-    preproc.connect(smooth, 'smoothed_file', split, 'in_file')
+    # # a custom function to plot dvars values against fd values
+    # plotmotionmetrics_node = pe.Node(interface=util.Function(input_names=['fd_metrics_file', 'dvars_metrics_file'], output_names=['outfile_path'], function=plotMotionMetrics), name='plot_fd_vs_dvars')
+    # preproc.connect(fdnode, 'outmetric', plotmotionmetrics_node, 'fd_metrics_file')
+    # preproc.connect(dvarsnode, 'outmetric', plotmotionmetrics_node, 'dvars_metrics_file')
 
 
-    #the artifact extract node removes the problematic frames as indicated by the artifact detection node
-    artifact_extract = pe.Node(interface=util.Function(input_names=['split_images', 'dvars_outliers', 'fd_outliers'], output_names=['extracted_images', 'rejectionsFile'], function=ArtifactExtraction), name='art_extract')
-    preproc.connect(split, 'out_files', artifact_extract, 'split_images')
-    preproc.connect(dvarsnode, 'outfile', artifact_extract, 'dvars_outliers')
-    preproc.connect(fdnode, 'outfile', artifact_extract, 'fd_outliers')
+    # #the split node splits the 4D BOLD image into its contituents 3D frames to allow certain timeframes to be removed
+    # split = pe.Node(interface=fsl.Split(dimension='t'), name = 'splitter')
+    # preproc.connect(smooth, 'smoothed_file', split, 'in_file')
 
 
-    #the merge node concatenates the 3D frames of the BOLD into its original 4D state after the removal of troublesome frames
-    merge = pe.Node(interface=fsl.Merge(dimension = 't'), name = 'merger')
-    preproc.connect(artifact_extract, 'extracted_images', merge, 'in_files')
-
-    fslroi_node = pe.Node(interface=fsl.ExtractROI(t_size=1), name = 'extractRoi')
-    preproc.connect(apply_bet, 'out_file', fslroi_node, 'in_file')
-    preproc.connect(bestRef_node, 'bestReference', fslroi_node, 't_min')
+    # #the artifact extract node removes the problematic frames as indicated by the artifact detection node
+    # artifact_extract = pe.Node(interface=util.Function(input_names=['split_images', 'dvars_outliers', 'fd_outliers'], output_names=['extracted_images', 'rejectionsFile'], function=ArtifactExtraction), name='art_extract')
+    # preproc.connect(split, 'out_files', artifact_extract, 'split_images')
+    # preproc.connect(dvarsnode, 'outfile', artifact_extract, 'dvars_outliers')
+    # preproc.connect(fdnode, 'outfile', artifact_extract, 'fd_outliers')
 
 
-    # ants for both linear and nonlinear registration
-    antsReg = pe.Node(interface=ants.Registration(), name='antsRegistration')
-    antsReg.inputs.transforms = ['Affine', 'SyN']
-    antsReg.inputs.transform_parameters = [(2.0,), (0.25, 3.0, 0.0)]
-    antsReg.inputs.number_of_iterations = [[1500, 200], [100, 50, 30]]
-    if testmode==True:
-        antsReg.inputs.number_of_iterations = [[5, 5], [5, 5, 5]]
-    antsReg.inputs.dimension = 3
-    antsReg.inputs.write_composite_transform = False
-    antsReg.inputs.collapse_output_transforms = False
-    antsReg.inputs.initialize_transforms_per_stage = False
-    antsReg.inputs.metric = ['Mattes']*2
-    antsReg.inputs.metric_weight = [1]*2 # Default (value ignored currently by ANTs)
-    antsReg.inputs.radius_or_number_of_bins = [32]*2
-    antsReg.inputs.sampling_strategy = ['Random', None]
-    antsReg.inputs.sampling_percentage = [0.05, None]
-    antsReg.inputs.convergence_threshold = [1.e-8, 1.e-9]
-    antsReg.inputs.convergence_window_size = [20]*2
-    antsReg.inputs.smoothing_sigmas = [[1,0], [2,1,0]]
-    antsReg.inputs.sigma_units = ['vox'] * 2
-    antsReg.inputs.shrink_factors = [[2,1], [3,2,1]]
-    antsReg.inputs.use_histogram_matching = [True, True] # This is the default
-    antsReg.inputs.output_warped_image = 'output_warped_image.nii.gz'
+    # #the merge node concatenates the 3D frames of the BOLD into its original 4D state after the removal of troublesome frames
+    # merge = pe.Node(interface=fsl.Merge(dimension = 't'), name = 'merger')
+    # preproc.connect(artifact_extract, 'extracted_images', merge, 'in_files')
 
-    preproc.connect(template_feed, 'template', antsReg, 'moving_image')
-    preproc.connect(fslroi_node, 'roi_file', antsReg, 'fixed_image')
+    # fslroi_node = pe.Node(interface=fsl.ExtractROI(t_size=1), name = 'extractRoi')
+    # preproc.connect(apply_bet, 'out_file', fslroi_node, 'in_file')
+    # preproc.connect(bestRef_node, 'bestReference', fslroi_node, 't_min')
 
-    antsAppTrfm = pe.Node(interface=ants.ApplyTransforms(), name='antsApplyTransform')
-    antsAppTrfm.inputs.dimension = 3
-    antsAppTrfm.inputs.interpolation = 'NearestNeighbor'
-    antsAppTrfm.inputs.default_value = 0
 
-    preproc.connect(segment_feed, 'segment', antsAppTrfm, 'input_image')
-    preproc.connect(fslroi_node, 'roi_file', antsAppTrfm, 'reference_image')
-    preproc.connect(antsReg, 'reverse_forward_transforms', antsAppTrfm, 'transforms')
-    preproc.connect(antsReg, 'reverse_forward_invert_flags', antsAppTrfm, 'invert_transform_flags')
+    # # ants for both linear and nonlinear registration
+    # antsReg = pe.Node(interface=ants.Registration(), name='antsRegistration')
+    # antsReg.inputs.transforms = ['Affine', 'SyN']
+    # antsReg.inputs.transform_parameters = [(2.0,), (0.25, 3.0, 0.0)]
+    # antsReg.inputs.number_of_iterations = [[1500, 200], [100, 50, 30]]
+    # if testmode==True:
+    #     antsReg.inputs.number_of_iterations = [[5, 5], [5, 5, 5]]
+    # antsReg.inputs.dimension = 3
+    # antsReg.inputs.write_composite_transform = False
+    # antsReg.inputs.collapse_output_transforms = False
+    # antsReg.inputs.initialize_transforms_per_stage = False
+    # antsReg.inputs.metric = ['Mattes']*2
+    # antsReg.inputs.metric_weight = [1]*2 # Default (value ignored currently by ANTs)
+    # antsReg.inputs.radius_or_number_of_bins = [32]*2
+    # antsReg.inputs.sampling_strategy = ['Random', None]
+    # antsReg.inputs.sampling_percentage = [0.05, None]
+    # antsReg.inputs.convergence_threshold = [1.e-8, 1.e-9]
+    # antsReg.inputs.convergence_window_size = [20]*2
+    # antsReg.inputs.smoothing_sigmas = [[1,0], [2,1,0]]
+    # antsReg.inputs.sigma_units = ['vox'] * 2
+    # antsReg.inputs.shrink_factors = [[2,1], [3,2,1]]
+    # antsReg.inputs.use_histogram_matching = [True, True] # This is the default
+    # antsReg.inputs.output_warped_image = 'output_warped_image.nii.gz'
 
-    rename_node = pe.Node(interface=util.Rename(), name='Rename')
-    rename_node.inputs.keep_ext = True
-    rename_node.inputs.format_string = 'final_preprocessed_output'
-    preproc.connect(merge, 'merged_file',rename_node, 'in_file')
-    preproc.connect(rename_node, 'out_file',datasink, DATATYPE_SUBJECT_DIR+'.@final_out')
+    # preproc.connect(template_feed, 'template', antsReg, 'moving_image')
+    # preproc.connect(fslroi_node, 'roi_file', antsReg, 'fixed_image')
 
-    GetMaxROI_node = pe.Node(interface=util.Function(input_names=['atlas_path'], output_names=['max_roi'], function=getMaxROI), name='GetMaxROI')
-    preproc.connect(segment_feed, 'segment', GetMaxROI_node, 'atlas_path')
+    # antsAppTrfm = pe.Node(interface=ants.ApplyTransforms(), name='antsApplyTransform')
+    # antsAppTrfm.inputs.dimension = 3
+    # antsAppTrfm.inputs.interpolation = 'NearestNeighbor'
+    # antsAppTrfm.inputs.default_value = 0
 
-    #the data extraction node takes in the BOLD and template images and extracts the necessary data (average voxel intensity per region, a similarity matrix, and a mapping dictionary)
-    CalcSimMatrix_node = pe.Node(interface=util.Function(input_names=['bold_path', 'template_path', 'maxSegVal'], output_names=['avg_arr_file', 'sim_matrix_file', 'mapping_dict_file'], function=CalcSimMatrix), name='CalcSimMatrix')
-    preproc.connect(GetMaxROI_node, 'max_roi', CalcSimMatrix_node, 'maxSegVal')
-    preproc.connect(merge, 'merged_file', CalcSimMatrix_node, 'bold_path')
-    preproc.connect(antsAppTrfm, 'output_image', CalcSimMatrix_node, 'template_path') # FSL Registation implementation
+    # preproc.connect(segment_feed, 'segment', antsAppTrfm, 'input_image')
+    # preproc.connect(fslroi_node, 'roi_file', antsAppTrfm, 'reference_image')
+    # preproc.connect(antsReg, 'reverse_forward_transforms', antsAppTrfm, 'transforms')
+    # preproc.connect(antsReg, 'reverse_forward_invert_flags', antsAppTrfm, 'invert_transform_flags')
+
+    # rename_node = pe.Node(interface=util.Rename(), name='Rename')
+    # rename_node.inputs.keep_ext = True
+    # rename_node.inputs.format_string = 'final_preprocessed_output'
+    # preproc.connect(merge, 'merged_file',rename_node, 'in_file')
+
+    # GetMaxROI_node = pe.Node(interface=util.Function(input_names=['atlas_path'], output_names=['max_roi'], function=getMaxROI), name='GetMaxROI')
+    # preproc.connect(segment_feed, 'segment', GetMaxROI_node, 'atlas_path')
+
+    # #the data extraction node takes in the BOLD and template images and extracts the necessary data (average voxel intensity per region, a similarity matrix, and a mapping dictionary)
+    # CalcSimMatrix_node = pe.Node(interface=util.Function(input_names=['bold_path', 'template_path', 'maxSegVal'], output_names=['avg_arr_file', 'sim_matrix_file', 'mapping_dict_file'], function=CalcSimMatrix), name='CalcSimMatrix')
+    # preproc.connect(GetMaxROI_node, 'max_roi', CalcSimMatrix_node, 'maxSegVal')
+    # preproc.connect(merge, 'merged_file', CalcSimMatrix_node, 'bold_path')
+    # preproc.connect(antsAppTrfm, 'output_image', CalcSimMatrix_node, 'template_path') # FSL Registation implementation
     
 
     # Should always be outputted
-    preproc.connect(bestRef_node, 'bestFramesFile', datasink, '{}.@bestFramesFile'.format(DATATYPE_SUBJECT_DIR))
-    preproc.connect(antsReg, 'warped_image', datasink, '{}.@warpedTemplate'.format(DATATYPE_SUBJECT_DIR))
-    preproc.connect(antsAppTrfm, 'output_image', datasink, '{}.@warpedAtlas'.format(DATATYPE_SUBJECT_DIR))
-    preproc.connect(CalcSimMatrix_node, 'avg_arr_file', datasink, DATATYPE_SUBJECT_DIR+'.@avgBoldSigPerRegion')
-    preproc.connect(CalcSimMatrix_node, 'sim_matrix_file', datasink, DATATYPE_SUBJECT_DIR+'.@similarityMatrix')
-    preproc.connect(plotmotionmetrics_node, 'outfile_path', datasink, DATATYPE_SUBJECT_DIR+'.@fdvsdvars_plot')
+    preproc.connect(reorient2std_node, 'out_file', datasink, '{}.@reorient'.format(DATASINK_PREFIX))
+    # preproc.connect(bestRef_node, 'bestFramesFile', datasink, '{}.@bestFramesFile'.format(DATASINK_PREFIX))
+    # preproc.connect(antsReg, 'warped_image', datasink, '{}.@warpedTemplate'.format(DATASINK_PREFIX))
+    # preproc.connect(antsAppTrfm, 'output_image', datasink, '{}.@warpedAtlas'.format(DATASINK_PREFIX))
+    # preproc.connect(CalcSimMatrix_node, 'avg_arr_file', datasink, DATASINK_PREFIX+'.@avgBoldSigPerRegion')
+    # preproc.connect(CalcSimMatrix_node, 'sim_matrix_file', datasink, DATASINK_PREFIX+'.@similarityMatrix')
+    # preproc.connect(plotmotionmetrics_node, 'outfile_path', datasink, DATASINK_PREFIX+'.@fdvsdvars_plot')
+    # preproc.connect(rename_node, 'out_file',datasink, DATASINK_PREFIX+'.@final_out')
 
 
 
-    # # ******************************************************************************
-    # # IF MEMORY IS PLENTIFUL, THEN SAVE EVERYTHING
-    if(saveIntermediates):
-        preproc.connect(segment_feed, 'segment', datasink, DATATYPE_SUBJECT_DIR+'.@OGSeg')
-        preproc.connect(motion_correct, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_out')
-        preproc.connect(motion_correct, 'par_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_par')
-        preproc.connect(motion_correct, 'rms_files', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_rms')
-        preproc.connect(brain_extract, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@be_out')
-        preproc.connect(apply_bet, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@applybe_out')
-        preproc.connect(normalization_node, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@normalization')
-        preproc.connect(artifact, 'outlier_files', datasink, DATATYPE_SUBJECT_DIR+'.@artdet_outs')
-        preproc.connect(calcOutliers, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@calcFDOuts_outs')
-        preproc.connect(artifact_extract, 'rejectionsFile', datasink, DATATYPE_SUBJECT_DIR+'.@rejects_summ')
-        preproc.connect(merge, 'merged_file', datasink, DATATYPE_SUBJECT_DIR+'.@merge_out')
-        preproc.connect(bias_correct, 'bias_field', datasink, DATATYPE_SUBJECT_DIR+'.@bias')
-        preproc.connect(regressNode, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@residual_out')
-        preproc.connect(apply_bias, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@appbias_out')
-        preproc.connect(band_pass, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@bandpass_out')
-        preproc.connect(smooth, 'smoothed_file', datasink, DATATYPE_SUBJECT_DIR+'.@smooth_out')
-        preproc.connect(antsAppTrfm, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_nlin_out')
-        preproc.connect(fdnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@fd_out')
-        preproc.connect(fdnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@fd_metrics')
-        preproc.connect(dvarsnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_out')
-        preproc.connect(dvarsnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_metrics')
-        preproc.connect(dvarsnode, 'outplot_path', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_plot')
-        preproc.connect(CalcSimMatrix_node, 'mapping_dict_file', datasink, DATATYPE_SUBJECT_DIR+'.@MappingDict')
-    # # ******************************************************************************
+    # # # ******************************************************************************
+    # # # IF MEMORY IS PLENTIFUL, THEN SAVE EVERYTHING
+    # if(saveIntermediates):
+    #     preproc.connect(segment_feed, 'segment', datasink, DATATYPE_SUBJECT_DIR+'.@OGSeg')
+    #     preproc.connect(motion_correct, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_out')
+    #     preproc.connect(motion_correct, 'par_file', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_par')
+    #     preproc.connect(motion_correct, 'rms_files', datasink, DATATYPE_SUBJECT_DIR+'.@mcf_rms')
+    #     preproc.connect(brain_extract, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@be_out')
+    #     preproc.connect(apply_bet, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@applybe_out')
+    #     preproc.connect(normalization_node, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@normalization')
+    #     preproc.connect(artifact, 'outlier_files', datasink, DATATYPE_SUBJECT_DIR+'.@artdet_outs')
+    #     preproc.connect(calcOutliers, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@calcFDOuts_outs')
+    #     preproc.connect(artifact_extract, 'rejectionsFile', datasink, DATATYPE_SUBJECT_DIR+'.@rejects_summ')
+    #     preproc.connect(merge, 'merged_file', datasink, DATATYPE_SUBJECT_DIR+'.@merge_out')
+    #     preproc.connect(bias_correct, 'bias_field', datasink, DATATYPE_SUBJECT_DIR+'.@bias')
+    #     preproc.connect(regressNode, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@residual_out')
+    #     preproc.connect(apply_bias, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@appbias_out')
+    #     preproc.connect(band_pass, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@bandpass_out')
+    #     preproc.connect(smooth, 'smoothed_file', datasink, DATATYPE_SUBJECT_DIR+'.@smooth_out')
+    #     preproc.connect(antsAppTrfm, 'out_file', datasink, DATATYPE_SUBJECT_DIR+'.@app_nlin_out')
+    #     preproc.connect(fdnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@fd_out')
+    #     preproc.connect(fdnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@fd_metrics')
+    #     preproc.connect(dvarsnode, 'outfile', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_out')
+    #     preproc.connect(dvarsnode, 'outmetric', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_metrics')
+    #     preproc.connect(dvarsnode, 'outplot_path', datasink, DATATYPE_SUBJECT_DIR+'.@dvars_plot')
+    #     preproc.connect(CalcSimMatrix_node, 'mapping_dict_file', datasink, DATATYPE_SUBJECT_DIR+'.@MappingDict')
+    # # # ******************************************************************************
 
     return preproc
 
@@ -728,43 +748,44 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
 def main():
     parser = makeParser()
     args   = parser.parse_args()
-    data_dir      = args.parentDir[0]
+    data_dir      = os.path.abspath(os.path.expanduser(args.parentDir[0]))
     outDir        = ''
     outDirName    = 'Sim_Funky_Pipeline'
     session       = vetArgNone(args.session_id, None)
     template_path = vetArgNone(args.template, '/app/Template/MNI152lin_T1_2mm_brain.nii.gz') #path in docker container
     segment_path  = vetArgNone(args.segment, '/app/Template/AAL3v1_CombinedThalami.nii.gz') #path in docker container
     enforceBIDS   = True
-    outDir        = makeOutDir(outDirName, args, enforceBIDS)
 
     if args.testmode:
         print("!!YOU ARE USING TEST MODE!!")
 
-    for i in os.listdir(args.parentDir[0]):
+    for i in os.listdir(data_dir):
         if i[:3] == 'ses':
             if session == None:
                 raise Exception("Your data is sorted into sessions but you did not indicate a session to process. Please provide the Session.")
 
     if session != None:
-        patient_func_dir = os.path.join(args.parentDir[0], session, args.subject_id[0], DATATYPE_SUBJECT_DIR)
+        patient_func_dir = os.path.join(data_dir, session, args.subject_id[0], DATATYPE_SUBJECT_DIR)
     else:
-        patient_func_dir = os.path.join(args.parentDir[0], args.subject_id[0], DATATYPE_SUBJECT_DIR)
+        patient_func_dir = os.path.join(data_dir, args.subject_id[0], DATATYPE_SUBJECT_DIR)
 
-    ## The following behavior only takes the first T1 seen in the directory. 
-    ## The code could be expanded to account for multiple runs
-    patient_func_path = None
+
+    patient_func_paths = []
     for i in os.listdir(patient_func_dir):
         if i[-11:] =='{}.nii.gz'.format(DATATYPE_FILE_SUFFIX):
-            patient_func_path = os.path.join(patient_func_dir, i)
+            patient_func_paths.append(os.path.join(patient_func_dir, i))
 
-    if patient_func_path == None:
-        print('Error: No {} images found for the specified patient. The pipeline cannot proceed. Please ensure that all filenames adhere to the BIDS standard. No NIFTI files with the extension \'_{}.nii.gz\' were detected. Exiting...'.format(DATATYPE_FILE_SUFFIX.upper(), DATATYPE_FILE_SUFFIX))
+    if len(patient_func_paths) == 0:
+        print('Error: No {} images found for the specified patient. The pipeline cannot proceed. Please ensure that all filenames adhere to the BIDS standard. No NIFTI files with the extension \'_{}.nii[.gz]\' were detected. Exiting...'.format(DATATYPE_FILE_SUFFIX.upper(), DATATYPE_FILE_SUFFIX))
     else:
-        preproc = buildWorkflow(patient_func_path, template_path, segment_path, outDir, args.subject_id[0], args.testmode, args.saveIntermediates)
-        tic = time.time()
-        preproc.run()
-        toc = time.time()
-        print('\nElapsed Time to Preprocess: {}s\n'.format(tic-toc))
+        for bold_path in patient_func_paths:
+            filename_noext = os.path.basename(bold_path).split('.')[0]
+            outDir = makeOutDir(outDirName, args, enforceBIDS)
+            preproc = buildWorkflow(bold_path, template_path, segment_path, outDir, args.subject_id[0], args.testmode, args.saveIntermediates)
+            tic = time.time()
+            preproc.run()
+            toc = time.time()
+            print('\nElapsed Time to Preprocess: {}s\n'.format(tic-toc))
 
 
 
