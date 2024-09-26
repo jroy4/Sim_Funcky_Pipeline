@@ -355,6 +355,7 @@ def ArtifactExtraction(split_images, dvars_outliers, fd_outliers):
     reject_dict['Number of frames removed by DVARS'] = int(len(dvars_rejects))
     reject_dict['Frames rejected by FD'] = [int(x) for x in set(fd_rejects)]
     reject_dict['Frames rejected by DVARS'] = [int(x) for x in set(dvars_rejects)]
+    reject_dict['Number of frames retained'] = int(len(split_copy)) - int(len(all_rejects))
 
     rejectionsFile = os.path.join(os.getcwd(),'rejections.json')
     with open(rejectionsFile, 'w') as r:
@@ -697,6 +698,7 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
     preproc.connect(CalcSimMatrix_node, 'sim_matrix_file', datasink, DATASINK_PREFIX+'.@similarityMatrix')
     preproc.connect(plotmotionmetrics_node, 'outfile_path', datasink, DATASINK_PREFIX+'.@fdvsdvars_plot')
     preproc.connect(rename_node, 'out_file',datasink, DATASINK_PREFIX+'.@final_out')
+    preproc.connect(artifact_extract, 'rejectionsFile', datasink, DATASINK_PREFIX+'.@rejects_summ')
 
 
 
@@ -710,9 +712,6 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
         preproc.connect(brain_extract, 'out_file', datasink, DATASINK_PREFIX+'.@be_out')
         preproc.connect(apply_bet, 'out_file', datasink, DATASINK_PREFIX+'.@applybe_out')
         preproc.connect(normalization_node, 'out_file', datasink, DATASINK_PREFIX+'.@normalization')
-        preproc.connect(artifact, 'outlier_files', datasink, DATASINK_PREFIX+'.@artdet_outs')
-        preproc.connect(calcOutliers, 'out_file', datasink, DATASINK_PREFIX+'.@calcFDOuts_outs')
-        preproc.connect(artifact_extract, 'rejectionsFile', datasink, DATASINK_PREFIX+'.@rejects_summ')
         preproc.connect(merge, 'merged_file', datasink, DATASINK_PREFIX+'.@merge_out')
         preproc.connect(bias_correct, 'bias_field', datasink, DATASINK_PREFIX+'.@bias')
         preproc.connect(regressNode, 'out_file', datasink, DATASINK_PREFIX+'.@residual_out')
