@@ -39,16 +39,16 @@ def makeParser():
                         help='Path to the parent data directory. BIDS compatible datasets are encouraged.')
     parser.add_argument('-sid','--subject_id', nargs=1, required=True,
                         help='Subject ID used to indicate which patient to preprocess')
-    parser.add_argument('-spath','--subject_t1_path', nargs=1, required=False,
-                        help='Path to a subjects T1 scan. This is not necessary if subject ID is provided as the T1 will be automatically found using the T1w.nii.gz extension')
+    # parser.add_argument('-spath','--subject_t1_path', nargs=1, required=False,
+    #                     help='Path to a subjects BOLD scan. This is not necessary if subject ID is provided')
     parser.add_argument('-ses_id','--session_id', nargs=1, required=False,
                         help='Session ID used to indicate which session to look for the patient to preprocess')
     parser.add_argument('-tem','--template', nargs=1, required=False,
-                        help='Template to be used to register into patient space. Default is MNI152lin_T1_2mm_brain.nii.gz')
+                        help='Template to be used to register into patient space. Default is MNI152lin_T1_4mm_brain.nii.gz')
     parser.add_argument('-seg','--segment', nargs=1, required=False,
-                        help='Atlas to be used to identify brain regions in patient space. This is used in conjunction with the template. Please ensure that the atlas is in the same space as the template. Default is the AALv3 template.')
-    parser.add_argument('-sched','--scheduleTxt', nargs=1, required=False,
-                        help='File needed as input to calculate best frame. Default is in Template directory')
+                        help='Atlas to be used to identify brain regions in patient space. This is used in conjunction with the template. Please ensure that the atlas is in the same space as the template. Default is the AALv2 template.')
+    # parser.add_argument('-sched','--scheduleTxt', nargs=1, required=False,
+    #                     help='File needed as input to calculate best frame. Default is in Template directory')
     parser.add_argument('-o','--outDir', nargs=1, required=True,
                         help='Path to the \'derivatives\' folder or chosen out folder. All results will be submitted to outDir/out/str_preproc/subject_id/...')
     parser.add_argument('--saveIntermediates', required=False, action='store_true',
@@ -740,8 +740,8 @@ def main():
     outDir        = ''
     outDirName    = 'Sim_Funky_Pipeline'
     session       = vetArgNone(args.session_id, None)
-    template_path = vetArgNone(args.template, '/app/Template/MNI152lin_T1_2mm_brain.nii.gz') #path in docker container
-    segment_path  = vetArgNone(args.segment, '/app/Template/AAL3v1_CombinedThalami.nii.gz') #path in docker container
+    template_path = vetArgNone(args.template, '/app/Template/MNI152lin_T1_4mm_brain.nii.gz') #path in docker container
+    segment_path  = vetArgNone(args.segment, '/app/Template/aal2.nii.gz') #path in docker container
     enforceBIDS   = True
 
     if args.testmode:
