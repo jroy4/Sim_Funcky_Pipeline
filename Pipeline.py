@@ -763,6 +763,8 @@ def main():
     for i in os.listdir(patient_func_dir):
         if i[-11:] =='{}.nii.gz'.format(DATATYPE_FILE_SUFFIX):
             patient_func_paths.append(os.path.join(patient_func_dir, i))
+        elif i[-8:] == '{}.nii'.format(DATATYPE_FILE_SUFFIX):
+            patient_func_paths.append(os.path.join(patient_func_dir, i))
 
     if len(patient_func_paths) == 0:
         print('Error: No {} images found for the specified patient. The pipeline cannot proceed. Please ensure that all filenames adhere to the BIDS standard. No NIFTI files with the extension \'_{}.nii[.gz]\' were detected. Exiting...'.format(DATATYPE_FILE_SUFFIX.upper(), DATATYPE_FILE_SUFFIX))
