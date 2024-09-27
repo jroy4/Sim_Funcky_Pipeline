@@ -747,13 +747,13 @@ def main():
     if args.testmode:
         print("!!YOU ARE USING TEST MODE!!")
 
-    for i in os.listdir(data_dir):
-        if i[:3] == 'ses':
+    for i in os.listdir(os.path.join(data_dir, args.subject_id[0])):
+        if 'ses-' in i:
             if session == None:
                 raise Exception("Your data is sorted into sessions but you did not indicate a session to process. Please provide the Session.")
 
     if session != None:
-        patient_func_dir = os.path.join(data_dir, session, args.subject_id[0], DATATYPE_SUBJECT_DIR)
+        patient_func_dir = os.path.join(data_dir, args.subject_id[0], args.session_id[0], DATATYPE_SUBJECT_DIR)
     else:
         patient_func_dir = os.path.join(data_dir, args.subject_id[0], DATATYPE_SUBJECT_DIR)
 
