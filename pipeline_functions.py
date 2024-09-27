@@ -15,9 +15,9 @@ def make_average_arr(bold_path, template_path, maxSegVal):
     structure_indices = maxSegVal+1
     uniq_structure_indices = np.unique(template_array)
     avg_arr = np.zeros((int(timepoints),int(structure_indices)))
-    for t in range(int(timepoints)):
+    for t in range(int(timepoints)): 
         bold_time = bold_array[:,:,:,t]
-        for s in range(int(structure_indices)):
+        for s in range(1, int(structure_indices)): #start at 1 since 0 is null
             if s not in uniq_structure_indices:
                 avg_arr[t,s] = 0. # to avoid finding average of missing indexes (i.e former thalami regions)
                 continue
