@@ -691,6 +691,7 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
 
     # Should always be outputted
     preproc.connect(reorient2std_node, 'out_file', datasink, '{}.@reorient'.format(DATASINK_PREFIX))
+    preproc.connect(apply_bet, 'out_file', datasink, DATASINK_PREFIX+'.@applybe_out')
     preproc.connect(bestRef_node, 'bestFramesFile', datasink, '{}.@bestFramesFile'.format(DATASINK_PREFIX))
     preproc.connect(antsReg, 'warped_image', datasink, '{}.@warpedTemplate'.format(DATASINK_PREFIX))
     preproc.connect(antsAppTrfm, 'output_image', datasink, '{}.@warpedAtlas'.format(DATASINK_PREFIX))
@@ -710,7 +711,6 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
         preproc.connect(motion_correct, 'par_file', datasink, DATASINK_PREFIX+'.@mcf_par')
         preproc.connect(motion_correct, 'rms_files', datasink, DATASINK_PREFIX+'.@mcf_rms')
         preproc.connect(brain_extract, 'out_file', datasink, DATASINK_PREFIX+'.@be_out')
-        preproc.connect(apply_bet, 'out_file', datasink, DATASINK_PREFIX+'.@applybe_out')
         preproc.connect(normalization_node, 'out_file', datasink, DATASINK_PREFIX+'.@normalization')
         preproc.connect(merge, 'merged_file', datasink, DATASINK_PREFIX+'.@merge_out')
         preproc.connect(bias_correct, 'bias_field', datasink, DATASINK_PREFIX+'.@bias')
