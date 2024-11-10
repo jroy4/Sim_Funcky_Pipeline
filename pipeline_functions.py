@@ -12,19 +12,19 @@ def make_average_arr(bold_path, template_path, maxSegVal):
     bold_array = bold.get_fdata()
     template_array = template.get_fdata() 
     _,_,_,timepoints = bold.shape
-    structure_indices = maxSegVal+1
+
     uniq_structure_indices = np.unique(template_array)
-    avg_arr = np.zeros((int(timepoints),int(structure_indices)))
+    avg_arr = np.zeros((int(timepoints),int(maxSegVal)))
     for t in range(int(timepoints)): 
         bold_time = bold_array[:,:,:,t]
-        for s in range(1, int(structure_indices)): #start at 1 since 0 is null
+        for s in range(1, int(maxSegVal)+1): #start at 1 since 0 is null
             if s not in uniq_structure_indices:
-                avg_arr[t,s] = 0. # to avoid finding average of missing indexes (i.e former thalami regions)
+                avg_arr[t,s-1] = 0.0 # to fix for starting at 1
                 continue
             template_indices = template_array == s
             matrix = bold_time[template_indices]
             res = np.average(matrix)
-            avg_arr[t,s] = res
+            avg_arr[t,s-1] = res
     # avg_arr = np.nan_to_num(avg_arr) #redundant but do just incase
     return avg_arr
 

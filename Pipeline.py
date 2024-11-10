@@ -545,7 +545,7 @@ def buildWorkflow(patient_func_path, template_path, segment_path, outDir, subjec
     # # finds the best frame to use as a reference
     bestRef_node = pe.Node(interface=util.Function(input_names=['in_file', 'scheduleTXT', 'derivatives_dir', 'testmode'], output_names=['bestReference', 'bestFramesFile'], function=findBestReference), name='findBestReference')
     bestRef_node.inputs.scheduleTXT = scheduleTXT
-    bestRef_node.inputs.derivatives_dir = os.path.join(datasink.inputs.base_directory)
+    bestRef_node.inputs.derivatives_dir = os.path.join(datasink.inputs.base_directory, DATASINK_PREFIX)
     bestRef_node.inputs.testmode = testmode
     preproc.connect(input_node, 'func', bestRef_node, 'in_file')
 
